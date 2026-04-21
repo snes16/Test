@@ -1,59 +1,59 @@
-# Autonomous Browser Agent MVP
+# MVP автономного браузерного агента
 
-TypeScript + Node.js + Playwright prototype of a small general-purpose autonomous browser agent.
+Прототип небольшого универсального автономного браузерного агента на TypeScript + Node.js + Playwright.
 
-It accepts a natural-language goal from terminal input, runs a tool-calling agent loop, controls a **headed** browser, logs each tool call in readable form, and ends with a short final report.
+Агент принимает цель на естественном языке из терминала, запускает цикл агента с вызовами инструментов, управляет браузером в **headed**-режиме, логирует каждый вызов инструмента в читаемом виде и завершает работу коротким финальным отчётом.
 
-## What This Project Does
+## Что делает проект
 
-- Launches a real Chromium browser in headed mode.
-- Accepts a free-form task from CLI.
-- Uses an OpenAI-compatible function-calling loop to decide actions at runtime.
-- Observes the page using structured extraction (not full HTML dumps).
-- Executes one meaningful step at a time through tools.
-- Pauses for user input when needed (login/captcha/payment ambiguity).
-- Produces a final report with status, summary, known facts, and unresolved questions.
+- Запускает реальный Chromium в headed-режиме.
+- Принимает свободно сформулированную задачу из CLI.
+- Использует OpenAI-совместимый цикл function calling для выбора действий во время выполнения.
+- Наблюдает за страницей через структурированное извлечение (без дампа всего HTML).
+- Выполняет по одному осмысленному шагу за раз через инструменты.
+- Ставит выполнение на паузу и запрашивает ввод пользователя, когда это нужно (логин/captcha/неоднозначность оплаты).
+- Формирует финальный отчёт со статусом, кратким итогом, известными фактами и нерешёнными вопросами.
 
-## Why This Architecture
+## Почему выбрана такая архитектура
 
-The assignment asks for a general agent, not a hardcoded site bot.  
-This implementation separates concerns so behavior stays generic:
+По заданию нужен универсальный агент, а не жёстко прошитый бот под конкретный сайт.  
+В этой реализации ответственность разделена так, чтобы поведение оставалось общим:
 
-- `src/agent/`: LLM loop, task state, stop conditions.
-- `src/browser/`: Playwright lifecycle.
-- `src/tools/`: compact tool layer with schemas + execution.
-- `src/observation/`: runtime page extraction and DOM querying.
-- `src/cli/`: terminal UX and readable logs.
-- `src/demo/`: reliable end-to-end demo scenario.
-- `src/types/`: shared contracts.
+- `src/agent/`: цикл LLM, состояние задачи, условия остановки.
+- `src/browser/`: жизненный цикл Playwright.
+- `src/tools/`: компактный слой инструментов (схемы + исполнение).
+- `src/observation/`: извлечение состояния страницы и DOM-запросы в рантайме.
+- `src/cli/`: терминальный UX и читаемые логи.
+- `src/demo/`: надёжный end-to-end демо-сценарий.
+- `src/types/`: общие контракты типов.
 
-This keeps the system understandable and extensible while still being practical for MVP.
+Так систему проще понимать и расширять, при этом она остаётся практичной для MVP.
 
-## Optional Sub-Agent Architecture
+## Опциональная архитектура sub-agent
 
-The project now supports an optional sub-agent router:
+В проекте есть опциональный роутер sub-agent:
 
-- `mailbox-audit` sub-agent: selected for read-only mailbox scan tasks.
-- `general-web` sub-agent: default fallback for all other tasks.
+- sub-agent `mailbox-audit`: выбирается для задач только на чтение и аудит почтового ящика.
+- sub-agent `general-web`: стандартный fallback для всех остальных задач.
 
-Safety behavior:
+Поведение безопасности:
 
-- Sub-agents are **disabled by default**.
-- Enable with `AGENT_ENABLE_SUBAGENTS=true`.
-- If a specialized sub-agent fails, runtime automatically falls back to `general-web`.
+- Sub-agent **выключены по умолчанию**.
+- Включаются через `AGENT_ENABLE_SUBAGENTS=true`.
+- Если специализированный sub-agent падает, рантайм автоматически откатывается на `general-web`.
 
-## Agent Loop
+## Цикл агента
 
-Core runtime loop:
+Основной runtime-цикл:
 
-1. Receive user goal.
-2. Model inspects/updates state via tools (`get_page_state`, `query_dom`, etc.).
-3. Model chooses next tool call.
-4. Tool executes one action and returns structured observation.
-5. Observation is fed back to model.
-6. Repeat until `finish_task`, blocked, or max-step limit.
+1. Получить цель пользователя.
+2. Модель анализирует/обновляет состояние через инструменты (`get_page_state`, `query_dom` и т.д.).
+3. Модель выбирает следующий вызов инструмента.
+4. Инструмент выполняет одно действие и возвращает структурированное наблюдение.
+5. Наблюдение передаётся обратно в модель.
+6. Повторять до `finish_task`, блокировки или лимита шагов.
 
-Explicit task state is maintained:
+Явно поддерживается состояние задачи:
 
 - `userGoal`
 - `knownFacts`
@@ -62,31 +62,31 @@ Explicit task state is maintained:
 - `currentPageSummary`
 - `latestObservation`
 
-## Page Understanding
+## Понимание страницы
 
-`get_page_state` returns a compact structured snapshot:
+`get_page_state` возвращает компактный структурированный снимок:
 
-- URL + title
-- interactive elements
-- form inputs
-- important text blocks
-- modal detection
-- high-level page signals (login/captcha/payment/destructive hints)
-- lightweight summary
+- URL и title
+- интерактивные элементы
+- поля форм
+- важные текстовые блоки
+- наличие модальных окон
+- высокоуровневые сигналы страницы (login/captcha/payment/destructive hints)
+- краткое summary
 
-### Runtime Element IDs
+### Runtime ID элементов
 
-No predefined selectors are used.
+Предопределённые селекторы не используются.
 
-- During observation, visible relevant DOM nodes are assigned runtime IDs via `data-agent-id` (e.g. `el_42`).
-- Action tools (`click_element`, `type_text`, `extract_text`) operate on these IDs.
-- If an ID goes stale, tools re-observe and retry.
+- Во время наблюдения видимым релевантным DOM-узлам назначаются runtime ID через `data-agent-id` (например, `el_42`).
+- Инструменты действий (`click_element`, `type_text`, `extract_text`) работают по этим ID.
+- Если ID устарел, инструменты повторно наблюдают страницу и делают повторную попытку.
 
-This avoids brittle site-specific selectors and supports runtime discovery on unknown pages.
+Это избавляет от хрупких site-specific селекторов и поддерживает runtime-обнаружение элементов на неизвестных страницах.
 
-## Tool Set
+## Набор инструментов
 
-Implemented tools:
+Реализованы инструменты:
 
 - `navigate_to_url`
 - `go_back`
@@ -102,57 +102,57 @@ Implemented tools:
 - `request_user_input`
 - `finish_task`
 
-Tools return concise structured observations for the next decision step.
+Инструменты возвращают краткие структурированные наблюдения для следующего шага принятия решения.
 
-## Safety Rules in Runtime
+## Правила безопасности в runtime
 
-The prompt and tool flow enforce pause/clarification when:
+Промпт и логика инструментов требуют паузы/уточнения, когда:
 
-- login is required
-- 2FA/captcha appears
-- payment confirmation is reached
-- destructive action is ambiguous
-- critical ambiguity remains
+- нужен логин
+- появляется 2FA/captcha
+- достигнут этап подтверждения оплаты
+- неоднозначно, является ли действие разрушительным
+- сохраняется критическая неоднозначность
 
-`request_user_input` pauses autonomy and asks the terminal user directly.
+`request_user_input` останавливает автономное выполнение и напрямую спрашивает пользователя в терминале.
 
-## Setup
+## Настройка
 
-## Prerequisites
+## Требования
 
 - Node.js 20+
 - npm
-- OpenAI-compatible API key
+- OpenAI-совместимый API-ключ
 
-## Install
+## Установка
 
 ```bash
 npm install
 npm run playwright:install
 ```
 
-If Playwright cannot write to a global browser cache, install locally:
+Если Playwright не может записать браузеры в глобальный кэш, установите локально:
 
 ```powershell
 $env:PLAYWRIGHT_BROWSERS_PATH='0'; npm run playwright:install
 ```
 
-## Environment
+## Переменные окружения
 
-Copy `.env.example` to `.env` and set at least:
+Скопируйте `.env.example` в `.env` и задайте как минимум:
 
 ```env
 OPENAI_API_KEY=...
 OPENAI_MODEL=gpt-4.1-mini
 ```
 
-Optional:
+Опционально:
 
 ```env
 OPENAI_BASE_URL=...
 ```
 
-Optional runtime defaults (so you can run only `npm start` without long flags):
+Опциональные runtime-значения по умолчанию (чтобы запускать просто `npm start` без длинных флагов):
 
 ```env
 AGENT_CDP_URL=http://127.0.0.1:9222
@@ -163,37 +163,37 @@ AGENT_PROFILE_DIRECTORY=Profile 4
 AGENT_BROWSER_CHANNEL=chrome
 ```
 
-`--start-url` is intentionally explicit per run and is not read from `.env`, so the agent is not pinned to one site.
-CLI flags always override `.env` defaults.
+`--start-url` намеренно задаётся явно для каждого запуска и не читается из `.env`, чтобы агент не был привязан к одному сайту.
+Флаги CLI всегда имеют приоритет над значениями из `.env`.
 
-## Run
+## Запуск
 
-Interactive mode:
+Интерактивный режим:
 
 ```bash
 npm run dev
 ```
 
-Or with arguments:
+Или с аргументами:
 
 ```bash
 npm run dev -- --task "Open example.com and summarize the homepage" --max-steps 40
 ```
 
-Run with an existing Chrome/Edge profile (persistent logged-in session):
+Запуск с существующим профилем Chrome/Edge (постоянная сессия с логином):
 
 ```powershell
 npm run dev -- --start-url "https://mail.google.com" --user-data-dir "C:\Users\YOUR_USER\AppData\Local\Google\Chrome\User Data" --profile-directory "Profile 1" --browser-channel chrome --task "Process latest 10 emails..."
 ```
 
-Notes:
-- Close regular Chrome/Edge windows before starting if profile lock errors appear.
-- `--profile-directory` can be `Default`, `Profile 1`, `Profile 2`, etc.
-- If you omit `--browser-channel`, `chrome` is used when `--user-data-dir` is set.
+Примечания:
+- Если появляются ошибки блокировки профиля, закройте обычные окна Chrome/Edge перед стартом.
+- `--profile-directory` может быть `Default`, `Profile 1`, `Profile 2` и т.д.
+- Если не указывать `--browser-channel`, при заданном `--user-data-dir` используется `chrome`.
 
-If Google blocks login with "This browser or app may not be secure", use CDP attach mode:
+Если Google блокирует вход сообщением "This browser or app may not be secure", используйте режим подключения по CDP:
 
-1. Start your regular Chrome profile manually with remote debugging:
+1. Запустите обычный профиль Chrome вручную с remote debugging:
 
 ```powershell
 & "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" `
@@ -202,21 +202,21 @@ If Google blocks login with "This browser or app may not be secure", use CDP att
   --profile-directory="Profile 1"
 ```
 
-2. Login manually in that Chrome window (if needed), then run the agent attached to it:
+2. Войдите вручную в этом окне Chrome (при необходимости), затем запустите агента с подключением к нему:
 
 ```powershell
 npm run dev -- --cdp-url "http://127.0.0.1:9222" --start-url "https://mail.google.com" --task "Process latest 10 emails..."
 ```
 
-In CDP mode the agent connects to your already opened browser session instead of launching an automation-marked login browser.
-When multiple tabs exist, the agent now prefers an already open tab matching the `--start-url` host before navigating.
+В CDP-режиме агент подключается к уже открытому сеансу браузера вместо запуска отдельного браузера для автоматизации.
+Если открыто несколько вкладок, агент сначала пытается использовать уже открытую вкладку с хостом из `--start-url`, и только потом навигируется.
 
-### CDP Troubleshooting (Chrome Profile)
+### Диагностика CDP (профиль Chrome)
 
-If you see `ECONNREFUSED 127.0.0.1:9222`, Chrome was not started with remote debugging (or on a different port).
+Если видите `ECONNREFUSED 127.0.0.1:9222`, значит Chrome не запущен с remote debugging (или использован другой порт).
 
-1. Fully close all Chrome windows.
-2. Start Chrome with your real profile and debug port:
+1. Полностью закройте все окна Chrome.
+2. Запустите Chrome с вашим реальным профилем и debug-портом:
 
 ```powershell
 & "$env:ProgramFiles\Google\Chrome\Application\chrome.exe" `
@@ -225,128 +225,128 @@ If you see `ECONNREFUSED 127.0.0.1:9222`, Chrome was not started with remote deb
   --profile-directory="Profile 4"
 ```
 
-3. Verify endpoint:
+3. Проверьте endpoint:
 
 ```powershell
 Invoke-WebRequest "http://127.0.0.1:9222/json/version" | Select-Object -ExpandProperty StatusCode
 ```
 
-Expected result: `200`.
+Ожидаемый результат: `200`.
 
-4. Run the agent with the same port:
+4. Запустите агента с тем же портом:
 
 ```powershell
 npm run dev -- --cdp-url "http://127.0.0.1:9222" --start-url "https://mail.google.com" --task "..."
 ```
 
-Notes:
-- `--profile-directory` must match your actual profile folder (`Default`, `Profile 1`, `Profile 2`, etc.).
-- Keep `--user-data-dir` as the full path with quotes (path contains spaces).
-- If you use another port, pass the same value in both Chrome launch and `--cdp-url`.
+Примечания:
+- `--profile-directory` должен совпадать с реальной папкой профиля (`Default`, `Profile 1`, `Profile 2` и т.д.).
+- Для `--user-data-dir` используйте полный путь в кавычках (в пути есть пробелы).
+- Если используете другой порт, укажите одно и то же значение и при запуске Chrome, и в `--cdp-url`.
 
-In restricted environments where `tsx` cannot spawn worker processes, use compiled mode:
+В ограниченных окружениях, где `tsx` не может создавать worker-процессы, используйте запуск из собранного кода:
 
 ```bash
 npm run build
 npm run start -- "Open example.com and summarize the homepage"
 ```
 
-With `AGENT_CDP_URL` set in `.env`, you can simply run:
+Если `AGENT_CDP_URL` задан в `.env`, можно запускать просто:
 
 ```bash
 npm start
 ```
 
-Then only enter the task in the prompt.
+После этого нужно ввести только задачу в prompt.
 
-## Reliable End-to-End Demo Scenario
+## Надёжный end-to-end демо-сценарий
 
-A local food-ordering demo site is included for repeatable assignment demos.
+В проект включён локальный демо-сайт для заказа еды, чтобы повторяемо показывать решение по заданию.
 
-Run:
+Запуск:
 
 ```bash
 npm run demo:food
 ```
 
-Non-interactive demo run:
+Неинтерактивный запуск демо:
 
 ```bash
 npm run demo:food -- --auto
 ```
 
-This starts a local site and runs a recommended task:
+Это поднимает локальный сайт и запускает рекомендованную задачу:
 
-- add items to cart
-- go through checkout
-- reach payment confirmation
-- stop before final payment
-- produce report
+- добавить товары в корзину
+- пройти checkout
+- дойти до подтверждения оплаты
+- остановиться до финальной оплаты
+- сформировать отчёт
 
-No site-specific hardcoded flow is implemented in the agent logic.
+В логике агента нет жёстко прошитого сценария под конкретный сайт.
 
-## Demo Recording Tips
+## Советы по записи демо
 
-For a clean video:
+Для чистого видео:
 
-1. Keep terminal and browser visible side-by-side.
-2. Use `npm run demo:food`.
-3. Show logs with:
-   - assistant intent
-   - tool name
-   - tool args
-   - tool result
-4. End on final report section.
+1. Держите терминал и браузер видимыми рядом.
+2. Используйте `npm run demo:food`.
+3. Покажите логи с:
+   - намерением ассистента
+   - именем инструмента
+   - аргументами инструмента
+   - результатом инструмента
+4. Завершите запись на секции финального отчёта.
 
-Session logs are stored in `artifacts/logs/`.
-Screenshots (if taken by tool) are in `artifacts/screenshots/`.
+Логи сессий сохраняются в `artifacts/logs/`.
+Скриншоты (если они делались инструментом) сохраняются в `artifacts/screenshots/`.
 
-## Design Decisions and Trade-offs
+## Ключевые решения и компромиссы
 
 1. **Responses API + function tools**
-   - Pros: native tool-calling loop.
-   - Trade-off: dynamic typing from SDK requires runtime validation (handled by Zod + guards).
+   - Плюсы: нативный цикл tool calling.
+   - Компромисс: динамическая типизация из SDK требует runtime-валидации (решено через Zod + guards).
 
-2. **Runtime `data-agent-id` tagging**
-   - Pros: avoids site-specific selectors and keeps actions model-friendly.
-   - Trade-off: IDs can go stale on heavy rerenders; tools recover by refreshing state.
+2. **Runtime-разметка `data-agent-id`**
+   - Плюсы: нет site-specific селекторов, а действия удобны для модели.
+   - Компромисс: при тяжёлых rerender ID могут устаревать; инструменты восстанавливаются через обновление состояния.
 
-3. **Compact observation over full HTML**
-   - Pros: lower token cost, clearer planning signals.
-   - Trade-off: some deep DOM details are abstracted away.
+3. **Компактные наблюдения вместо полного HTML**
+   - Плюсы: меньше расход токенов, более понятные сигналы для планирования.
+   - Компромисс: часть глубокой DOM-детализации абстрагируется.
 
 4. **Terminal-first UX**
-   - Pros: fast MVP and clear logs for assignment review.
-   - Trade-off: no rich chat UI yet.
+   - Плюсы: быстрый MVP и прозрачные логи для проверки задания.
+   - Компромисс: пока нет богатого chat UI.
 
-5. **Local demo site**
-   - Pros: deterministic demo reliability.
-   - Trade-off: does not prove coverage of every external modern web app edge case.
+5. **Локальный демо-сайт**
+   - Плюсы: детерминированная надёжность демо.
+   - Компромисс: не доказывает покрытие всех edge-case внешних современных веб-приложений.
 
-## Why This Avoids Hardcoded Flows
+## Почему это решение без хардкода
 
-- No predefined selectors for specific domains.
-- No URL-path assumptions.
-- No site-specific scripts in agent logic.
-- Decisions are made from current extracted state + tool outputs at runtime.
+- Нет предопределённых селекторов под конкретные домены.
+- Нет предположений по URL-путям.
+- Нет site-specific скриптов в логике агента.
+- Решения принимаются на основе текущего извлечённого состояния и результатов инструментов во время выполнения.
 
-## Known Limitations
+## Известные ограничения
 
-- Single-tab, single-page context management.
-- No long-term memory persistence across sessions.
-- CAPTCHA/login handling requires user help (by design).
-- Complex SPA rerenders can invalidate IDs more frequently.
-- LLM quality and API latency affect success rate.
-- No automatic retry policy per tool beyond local validation/re-observation.
+- Управление контекстом только для одной вкладки и одной страницы.
+- Нет долгосрочной памяти между сессиями.
+- Для CAPTCHA/login требуется помощь пользователя (по дизайну).
+- Сложные SPA-rerender могут чаще инвалидировать ID.
+- Качество LLM и задержки API влияют на успешность.
+- Нет автоматической retry-политики по инструментам, кроме локальной валидации и повторного наблюдения.
 
-## Build / Typecheck
+## Сборка / Проверка типов
 
 ```bash
 npm run typecheck
 npm run build
 ```
 
-## Project Structure
+## Структура проекта
 
 ```text
 src/
