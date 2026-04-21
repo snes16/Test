@@ -143,7 +143,7 @@ $env:PLAYWRIGHT_BROWSERS_PATH='0'; npm run playwright:install
 
 ```env
 OPENAI_API_KEY=...
-OPENAI_MODEL=gpt-5.4
+OPENAI_MODEL=gpt-5.4-mini
 ```
 
 Опционально:
