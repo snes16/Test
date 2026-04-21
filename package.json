@@ -1,0 +1,31 @@
+{
+  "name": "autonomous-browser-agent-mvp",
+  "version": "1.0.0",
+  "description": "Autonomous browser agent MVP with TypeScript, Node.js, Playwright, and OpenAI tool-calling.",
+  "main": "dist/cli/index.js",
+  "scripts": {
+    "predev": "npm run build",
+    "prestart": "npm run build",
+    "dev": "node dist/cli/index.js",
+    "predemo:food": "npm run build",
+    "demo:food": "node dist/demo/run-food-demo.js",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/cli/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "playwright:install": "playwright install chromium"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "openai": "^6.34.0",
+    "playwright": "^1.59.1",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/node": "^25.6.0",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.3"
+  }
+}
