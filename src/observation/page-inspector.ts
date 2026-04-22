@@ -1,4 +1,4 @@
-import { BrowserManager } from "../browser/browser-manager";
+﻿import { BrowserManager } from "../browser/browser-manager";
 import {
   DomQueryMatch,
   DomQueryResult,
@@ -51,6 +51,52 @@ function tokenize(input: string): string[] {
     .split(/\s+/)
     .map((item) => item.trim())
     .filter((item) => item.length > 2 && !STOP_WORDS.has(item));
+}
+
+function hasVacancySignals(haystack: string): boolean {
+  return /(РѕС‚РєР»РёРє|apply|salary|Р·Р°СЂРїР»Р°С‚|experience|РѕРїС‹С‚|location|Р»РѕРєР°С†|remote|СѓРґР°Р»РµРЅ|per month|Р·Р° РјРµСЃСЏС†|СЂСѓР±|в‚Ѕ|\$|в‚¬)/i.test(
+    haystack,
+  );
+}
+
+function hasRoleSignals(haystack: string): boolean {
+  return /(engineer|developer|scientist|analyst|manager|architect|qa|devops|designer|product|data|ai|ml|РёРЅР¶РµРЅРµСЂ|СЂР°Р·СЂР°Р±РѕС‚С‡РёРє|Р°РЅР°Р»РёС‚РёРє|РјРµРЅРµРґР¶РµСЂ|Р°СЂС…РёС‚РµРєС‚РѕСЂ|РґРёР·Р°Р№РЅРµСЂ)/i.test(
+    haystack,
+  );
+}
+
+function isCompanyPromoVacancyCard(haystack: string): boolean {
+  return (
+    /(Р°РєС‚РёРІРЅ\w*\s+РІР°РєР°РЅСЃРё\w*|active\s+vacanc(?:y|ies)|РїРѕСЃРјРѕС‚СЂРµС‚СЊ|view)/i.test(haystack) &&
+    !hasVacancySignals(haystack)
+  );
+}
+
+function isResumePromoCard(haystack: string): boolean {
+  return /(РіРѕС‚РѕРІРѕРµ\s+СЂРµР·СЋРјРµ|СЂРµРїРµС‚РёС†РёСЏ\s+СЃРѕР±РµСЃРµРґРѕРІР°РЅРёСЏ|РєР°СЂСЊРµСЂРЅ\w*\s+РєРѕРЅСЃСѓР»СЊС‚|РЅР°СЃС‚Р°РІРЅРёРє|РјРµРЅС‚РѕСЂ|РґРѕРІРµСЂСЊС‚Рµ\s+СЃРѕСЃС‚Р°РІР»РµРЅРёРµ\s+СЂРµР·СЋРјРµ|СЃРєРёРґРє|РґРѕ\s+\d{1,2}\.\d{1,2})/i.test(
+    haystack,
+  );
+}
+
+function isLikelyResumeEntry(haystack: string): boolean {
+  if (isResumePromoCard(haystack)) {
+    return false;
+  }
+  return /(СЂРµР·СЋРј|resume|cv|РѕР±РЅРѕРІР»РµРЅ|СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ|РїРѕРґРЅСЏС‚СЊ\s+РІ\s+РїРѕРёСЃРєРµ|РїСЂРѕСЃРјРѕС‚СЂ\w*|Р¶РµР»Р°РµРјР°СЏ\s+РґРѕР»Р¶РЅРѕСЃС‚СЊ|Р¶РµР»Р°РµРјР°СЏ\s+Р·Р°СЂРїР»Р°С‚Р°)/i.test(
+    haystack,
+  );
+}
+
+function hasExplicitListCue(question: string): boolean {
+  return /(items?|list|rows?|cards?|messages?|vacanc|jobs?|orders?|emails?|results?|спис|ряд|карточ|сообщен|письм|ваканс|заказ|результат)/i.test(
+    question,
+  );
+}
+
+function isVacancyRequirementsQuestion(question: string): boolean {
+  return /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+    question,
+  );
 }
 
 function buildSummary(
@@ -595,11 +641,35 @@ export class PageInspector {
     }
 
     const listIntent =
-      /(first|latest|recent|top|last|перв|последн|спис|писем|сообщен|ваканс|заказ|items?)/i.test(
+      /(first|latest|recent|top|last|items?|list|rows?|messages?|vacanc|jobs?|orders?|РїРµСЂРІ|РїРѕСЃР»РµРґРЅ|СЃРїРёСЃ|РїРёСЃРµРј|СЃРѕРѕР±С‰РµРЅ|РІР°РєР°РЅСЃ|Р·Р°РєР°Р·)/i.test(
         lowerQuestion,
       );
-    if (listIntent) {
-      let bonus = 2;
+    const vacancyIntent = /(vacanc|job|position|role|СЂР°Р±РѕС‚|РІР°РєР°РЅСЃ|РґРѕР»Р¶РЅРѕСЃС‚)/i.test(
+      lowerQuestion,
+    );
+    const onVacancyPage = /\/vacancy\/\d+/i.test(state.url.toLowerCase());
+    const resumeIntent = /(resume|cv|СЂРµР·СЋРј|РїСЂРѕС„РёР»)/i.test(lowerQuestion);
+    const vacancyDetailIntent =
+      vacancyIntent &&
+      /(title|company|requirement|salary|location|skills?|experience|РЅР°Р·РІР°РЅ|РєРѕРјРїР°РЅ|С‚СЂРµР±РѕРІР°РЅ|Р·Р°СЂРїР»Р°С‚|Р»РѕРєР°С†|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃСЃС‹Р»Рє)/i.test(
+        lowerQuestion,
+      );
+    const vacancyRequirementsIntent =
+      (vacancyIntent || onVacancyPage) && isVacancyRequirementsQuestion(lowerQuestion);
+    const listIntentForNavigationHints = hasExplicitListCue(lowerQuestion);
+    const applyIntent =
+      vacancyIntent &&
+      /(apply|respond|quick apply|send application|РѕС‚РєР»РёРє|РѕС‚РїСЂР°РІРёС‚СЊ СЂРµР·СЋРјРµ|РїРѕРґР°С‚СЊ Р·Р°СЏРІРєСѓ)/i.test(
+        lowerQuestion,
+      );
+    const coverLetterIntent =
+      vacancyIntent &&
+      /(cover[\s-]*letter|motivation|message to employer|СЃРѕРїСЂРѕРІРѕРґ|РїРёСЃСЊРјРѕ СЂР°Р±РѕС‚РѕРґР°С‚РµР»СЋ|РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє РѕС‚РєР»РёРєСѓ)/i.test(
+        lowerQuestion,
+      );
+
+    if (listIntentForNavigationHints) {
+      let bonus = vacancyDetailIntent ? 1.5 : 2;
       for (const element of state.interactiveElements) {
         if (!element.role) {
           continue;
@@ -617,34 +687,151 @@ export class PageInspector {
             160,
           ),
         });
-        bonus = Math.max(1, bonus - 0.1);
-        if (bonus <= 1.1) {
+        const minBonus = vacancyDetailIntent ? 0.8 : 1;
+        const stopAt = vacancyDetailIntent ? 0.9 : 1.1;
+        bonus = Math.max(minBonus, bonus - 0.1);
+        if (bonus <= stopAt) {
           // Keep only a compact fallback set.
           break;
         }
       }
     }
 
-    if (listIntent) {
+    if (listIntentForNavigationHints) {
       for (const match of matches) {
         const low = `${match.label} ${match.details}`.toLowerCase();
-        if (
+        const hasRowLikeRole =
           low.includes("role=row") ||
           low.includes("role=listitem") ||
           low.includes("role=option") ||
           low.includes("role=treeitem") ||
-          low.includes("[tag=tr")
-        ) {
-          match.score += 4;
+          low.includes("[tag=tr");
+        const vacancySignal = hasVacancySignals(low);
+        const roleSignal = hasRoleSignals(low);
+        const companyPromoCard = isCompanyPromoVacancyCard(low);
+
+        if (hasRowLikeRole) {
+          if (vacancyDetailIntent) {
+            match.score += vacancySignal || roleSignal ? 1.8 : 0.4;
+          } else {
+            match.score += 4;
+          }
         }
+        if (vacancyIntent) {
+          if (low.includes("role=link") || low.includes("role=button")) {
+            match.score += 0.9;
+          }
+          if (vacancySignal) {
+            match.score += 2.2;
+          }
+          if (roleSignal) {
+            match.score += 1.4;
+          }
+          if (
+            /(РїРµСЂРµР№С‚Рё Рє РѕСЃРЅРѕРІРЅРѕРјСѓ РєРѕРЅС‚РµРЅС‚Сѓ|РїРѕРёСЃРє|search|СѓРґР°Р»РёС‚СЊ РёР· РёР·Р±СЂР°РЅРЅРѕРіРѕ|filters?|С„РёР»СЊС‚СЂ|sorting|СЃРѕСЂС‚РёСЂРѕРІРє|РЅР°СЃС‚СЂРѕР№Рє)/i.test(
+              low,
+            )
+          ) {
+            match.score -= 2.5;
+          }
+          if (
+            /(hh\s*pro|готовое\s+резюме|репетиция\s+собеседования|карьерн\w*\s+консульт|ментор|наставник|доверьте\s+составление\s+резюме|подписк|скидк)/i.test(
+              low,
+            ) &&
+            !vacancySignal &&
+            !roleSignal
+          ) {
+            match.score -= 8;
+          }
+        }
+        if (vacancyDetailIntent) {
+          if (low.includes("role=link") && (vacancySignal || roleSignal)) {
+            match.score += 2.5;
+          }
+          if (roleSignal) {
+            match.score += 1.8;
+          }
+          if (vacancySignal) {
+            match.score += 2.2;
+          }
+          if (companyPromoCard) {
+            match.score -= 6;
+          }
+          if (/(РЅР°Р№РґРµРЅРѕ\s+\d+\s+РІР°РєР°РЅСЃ|found\s+\d+\s+vacanc)/i.test(low)) {
+            match.score -= 3;
+          }
+        }
+        if (resumeIntent) {
+          if (isResumePromoCard(low)) {
+            match.score -= 8;
+          }
+          if (isLikelyResumeEntry(low)) {
+            match.score += 4;
+          }
+        }
+
         if (
           low.includes("role=link") &&
-          /(входящ|черновик|корзин|ярлык|labels|inbox|drafts|trash|spam)/i.test(low)
+          /(РІС…РѕРґСЏС‰|С‡РµСЂРЅРѕРІРёРє|РєРѕСЂР·РёРЅ|СЏСЂР»С‹Рє|labels|inbox|drafts|trash|spam)/i.test(low)
         ) {
           match.score -= 2;
         }
         if (match.label.length > 180) {
           match.score -= 1;
+        }
+      }
+    }
+
+    if (
+      applyIntent ||
+      coverLetterIntent ||
+      vacancyDetailIntent ||
+      vacancyRequirementsIntent
+    ) {
+      for (const match of matches) {
+        const low = `${match.label} ${match.details}`.toLowerCase();
+
+        if (applyIntent) {
+          if (
+            /(apply|quick apply|respond|response|send application|РѕС‚РєР»РёРє|РѕС‚РєР»РёРєРЅСѓС‚СЊСЃСЏ|РѕС‚РїСЂР°РІРёС‚СЊ РѕС‚РєР»РёРє|РѕС‚РїСЂР°РІРёС‚СЊ СЂРµР·СЋРјРµ|РїРѕРґР°С‚СЊ Р·Р°СЏРІРєСѓ)/i.test(
+              low,
+            )
+          ) {
+            match.score += 6;
+          }
+          if (low.includes("role=button") || low.includes("role=link")) {
+            match.score += 1.5;
+          }
+        }
+
+        if (coverLetterIntent) {
+          if (
+            /(cover[\s-]*letter|motivation|message to employer|СЃРѕРїСЂРѕРІРѕРґ|РїРёСЃСЊРјРѕ СЂР°Р±РѕС‚РѕРґР°С‚РµР»СЋ|РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє РѕС‚РєР»РёРєСѓ)/i.test(
+              low,
+            )
+          ) {
+            match.score += 7;
+          }
+          if (
+            match.source === "form" ||
+            low.includes("role=textbox") ||
+            low.includes("tag=textarea")
+          ) {
+            match.score += 2.2;
+          }
+        }
+
+        if (vacancyDetailIntent || vacancyRequirementsIntent) {
+          if (
+            /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+              low,
+            )
+          ) {
+            match.score += 3;
+          }
+          if (match.source === "text") {
+            match.score += 1.2;
+          }
         }
       }
     }
@@ -660,8 +847,29 @@ export class PageInspector {
     if (trimmed.length > 0) {
       const top = trimmed[0];
       answer = `Found ${trimmed.length} relevant matches. Top match: "${top.label}" (${top.source}, score ${top.score}).`;
+    } else if (vacancyDetailIntent || vacancyRequirementsIntent) {
+      const detailBlock = state.textBlocks.find((item) =>
+        /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+          item.text,
+        ),
+      );
+      if (detailBlock) {
+        const syntheticMatch: DomQueryMatch = {
+          score: 3.5,
+          source: "text",
+          label: truncate(detailBlock.text, 120),
+          details: `tag=${detailBlock.tag}`,
+        };
+        trimmed.push(syntheticMatch);
+        answer = `Found contextual vacancy details in visible text: "${syntheticMatch.label}".`;
+      }
     }
-    if (listIntent && rowLikeVisible < 3) {
+    const searchResultsLike =
+      /\/search\/vacancy/i.test(state.url) ||
+      state.textBlocks.some((item) =>
+        /(РЅР°Р№РґРµРЅРѕ\s+\d+\s+РІР°РєР°РЅСЃ|found\s+\d+\s+vacanc)/i.test(item.text.toLowerCase()),
+      );
+    if (listIntentForNavigationHints && rowLikeVisible < 3 && !searchResultsLike) {
       answer +=
         " It looks like the page is not in a full list view now. Return to the list view (go_back or visible Back/Close control), then refresh page state.";
     }

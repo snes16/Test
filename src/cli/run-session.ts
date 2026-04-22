@@ -3,6 +3,7 @@ import path from "node:path";
 import { BrowserAgent } from "../agent/browser-agent";
 import { createOpenAIClientFromEnv, getModelFromEnv } from "../agent/openai-client";
 import { GeneralWebSubAgent } from "../agent/subagents/general-web-sub-agent";
+import { HhJobApplicationSubAgent } from "../agent/subagents/hh-job-application-sub-agent";
 import { MailboxAuditSubAgent } from "../agent/subagents/mailbox-audit-sub-agent";
 import { SubAgentRouter } from "../agent/subagents/sub-agent-router";
 import { createTaskPolicy } from "../agent/task-policy";
@@ -114,7 +115,10 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
   const client = createOpenAIClientFromEnv();
   const model = getModelFromEnv();
   const taskPolicy = createTaskPolicy(options.task);
-  const enableSubAgents = parseBooleanFromEnv("AGENT_ENABLE_SUBAGENTS");
+  const enableSubAgents =
+    parseBooleanFromEnv("AGENT_ENABLE_SUBAGENTS") ||
+    taskPolicy.auditReadOnlyMailboxScan ||
+    taskPolicy.jobApplicationFlow;
 
   logger.logStatus("Инициализация сессии браузера...");
 
@@ -175,6 +179,25 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
 - Если переход на внешний сайт необходим, сначала кратко объясни причину в намерении.`;
     }
 
+    if (taskPolicy.jobApplicationFlow) {
+      const searchQueryLine = taskPolicy.jobSearchQueryHint
+        ? `- Целевой поисковый запрос вакансий: ${taskPolicy.jobSearchQueryHint}.`
+        : "- Определи целевой поисковый запрос вакансий из формулировки задачи.";
+      effectiveTask = `${effectiveTask}
+
+Дополнительный контекст выполнения (job-application):
+- Сначала открой профиль/резюме пользователя и извлеки ключевые факты (навыки, роль, опыт).
+- Если виден ровно один вариант резюме, используй его автоматически и не задавай вопрос пользователю.
+${searchQueryLine}
+- Если в задаче указана целевая роль/ключевой запрос, используй его как основной поисковый запрос вакансий.
+- Затем через поиск вакансий иди сверху вниз: открыть вакансию -> извлечь ключевые данные -> решить apply/skip.
+- Для каждой вакансии извлеки: название, компания, требования, зарплата, локация.
+- При отклике используй персонализированное сопроводительное письмо на основе фактов профиля.
+- Не откликайся повторно на одну и ту же вакансию (по URL/ID).
+- По умолчанию нужен минимум один успешный отклик, если пользователь явно не запросил другое количество.
+- Заверши задачу только после итогового отчета по reviewed/applied/skipped позициям.`;
+    }
+
     const runtimeStats: RuntimeStats = {
       clickedElementIds: new Set<string>(),
       clickedListItemIds: new Set<string>(),
@@ -197,6 +220,15 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
         visitedPreviewFingerprints: new Set(),
         duplicateSkips: 0,
         staleRecoveries: 0,
+      },
+      jobApplication: {
+        enabled: taskPolicy.jobApplicationFlow,
+        targetApplyCount: Math.max(1, taskPolicy.requestedJobApplyCount ?? 1),
+        openedVacancyFingerprints: new Set(),
+        extractedVacancyFingerprints: new Set(),
+        appliedVacancyFingerprints: new Set(),
+        coverLetterVacancyFingerprints: new Set(),
+        currentVacancyFingerprint: null,
       },
     };
 
@@ -228,7 +260,11 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
     let runResult: AgentRunResult;
     if (enableSubAgents) {
       const router = new SubAgentRouter(
-        [new MailboxAuditSubAgent(createAgent), new GeneralWebSubAgent(createAgent)],
+        [
+          new HhJobApplicationSubAgent(createAgent),
+          new MailboxAuditSubAgent(createAgent),
+          new GeneralWebSubAgent(createAgent),
+        ],
         logger,
       );
       const routed = await router.run(effectiveTask, taskPolicy);

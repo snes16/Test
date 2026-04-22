@@ -72,17 +72,33 @@ export interface TaskState {
   unresolvedQuestions: string[];
   currentPageSummary: string;
   latestObservation: string;
+  currentUrl?: string;
+  currentTitle?: string;
   latestSignals?: PageSignals;
 }
 
 export interface TaskPolicy {
   auditReadOnlyMailboxScan: boolean;
+  jobApplicationFlow: boolean;
+  profileResumeContextRequired: boolean;
+  requestedJobApplyCount: number | null;
+  jobSearchQueryHint: string | null;
   fullySpecified: boolean;
   requestedItemCount: number | null;
   shoppingAddToCart: boolean;
   requestedCartAddCount: number | null;
   suppressIntermediateAssistantText: boolean;
   suppressUnnecessaryUserQuestions: boolean;
+}
+
+export interface JobApplicationRuntime {
+  enabled: boolean;
+  targetApplyCount: number;
+  openedVacancyFingerprints: Set<string>;
+  extractedVacancyFingerprints: Set<string>;
+  appliedVacancyFingerprints: Set<string>;
+  coverLetterVacancyFingerprints: Set<string>;
+  currentVacancyFingerprint: string | null;
 }
 
 export type MailboxScanStage =

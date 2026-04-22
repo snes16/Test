@@ -1,6 +1,6 @@
 ﻿import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { Locator } from "playwright";
+import { Locator, Page } from "playwright";
 import { z } from "zod";
 import { parseRequestedItemCount } from "../agent/task-policy";
 import {
@@ -385,6 +385,525 @@ function cartPageHasItems(state: PageState): boolean {
   );
 
   return productLinks.length > 0 && hasCartControls;
+}
+
+function isResumeSelectionQuestion(question: string): boolean {
+  const normalized = question.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  const mentionsResume = /(resume|cv|резюм|профил)/i.test(normalized);
+  if (!mentionsResume) {
+    return false;
+  }
+
+  return /(which|what|choose|select|pick|use|како|какой|какую|выбери|выбрать|использ)/i.test(
+    normalized,
+  );
+}
+
+function detectSingleVisibleResumeOption(
+  state: PageState,
+): { elementId: string; label: string } | null {
+  const rawCandidates = state.interactiveElements.filter(
+    (element) =>
+      element.visible &&
+      element.enabled &&
+      /(resume|cv|резюм)/i.test(`${element.name} ${element.description}`),
+  );
+
+  const uniqueByLabel = new Map<string, { elementId: string; label: string }>();
+  for (const candidate of rawCandidates) {
+    const label = compact(`${candidate.name} ${candidate.description}`, 160);
+    const normalized = label.toLowerCase().replace(/\s+/g, " ").trim();
+    if (!normalized || normalized.length < 6) {
+      continue;
+    }
+    if (
+      /(new\s+resume|create\s+resume|add\s+resume|создать\s+резюме|добавить\s+резюме|готовое\s+резюме|репетиция\s+собеседования|карьерн\w*\s+консульт|ментор|наставник|доверьте\s+составление\s+резюме|скидк|до\s+\d{1,2}\.\d{1,2})/i.test(
+        normalized,
+      )
+    ) {
+      continue;
+    }
+    if (!uniqueByLabel.has(normalized)) {
+      uniqueByLabel.set(normalized, {
+        elementId: candidate.elementId,
+        label,
+      });
+    }
+  }
+
+  if (uniqueByLabel.size !== 1) {
+    return null;
+  }
+  return Array.from(uniqueByLabel.values())[0] ?? null;
+}
+
+function isVacancySearchListPath(pathname: string): boolean {
+  const normalized = pathname.toLowerCase();
+  return (
+    normalized === "/search/vacancy" ||
+    normalized.startsWith("/search/vacancy/") ||
+    normalized.includes("/vacancy/search") ||
+    normalized.includes("/search/job") ||
+    normalized.includes("/jobs/search")
+  );
+}
+
+function extractVacancyIdFromPath(pathname: string): string | null {
+  const normalized = pathname.toLowerCase();
+  const idMatch =
+    normalized.match(/\/vacanc(?:y|ies)\/(\d{4,})/) ??
+    normalized.match(/\/job\/(\d{4,})/) ??
+    normalized.match(/\/jobs\/(\d{4,})/) ??
+    normalized.match(/\/(?:работ|ваканс)[^/]*\/(\d{4,})/);
+  return idMatch?.[1] ?? null;
+}
+
+function isLikelyVacancyUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.toLowerCase();
+    if (isVacancySearchListPath(pathname)) {
+      return false;
+    }
+    if (extractVacancyIdFromPath(pathname)) {
+      return true;
+    }
+    if (pathname.includes("/vacancy/") || pathname.includes("/job/") || pathname.includes("/career/")) {
+      return true;
+    }
+    if (
+      (pathname.includes("/vacancy") || pathname.includes("/job")) &&
+      parsed.searchParams.has("id")
+    ) {
+      return true;
+    }
+    return false;
+  } catch {
+    return false;
+  }
+}
+
+function vacancyFingerprintFromUrl(url: string): string | null {
+  try {
+    const parsed = new URL(url);
+    const pathname = parsed.pathname.toLowerCase();
+    if (isVacancySearchListPath(pathname)) {
+      return null;
+    }
+
+    const vacancyId = extractVacancyIdFromPath(pathname);
+    if (vacancyId) {
+      return `vacancy:${vacancyId}`;
+    }
+
+    if (pathname.includes("/vacancy/") || pathname.includes("/job/") || pathname.includes("/career/")) {
+      return `url:${`${parsed.origin}${parsed.pathname}`.toLowerCase()}`;
+    }
+    return null;
+  } catch {
+    const normalized = url.toLowerCase();
+    const idMatch = normalized.match(/\/vacanc(?:y|ies)\/(\d{4,})|\/job\/(\d{4,})/);
+    if (idMatch?.[1] || idMatch?.[2]) {
+      return `vacancy:${idMatch[1] ?? idMatch[2]}`;
+    }
+    return null;
+  }
+}
+
+function vacancyFingerprintFromText(text: string): string | null {
+  const normalized = normalizeFingerprintPart(text).replace(/\s+/g, " ").trim();
+  if (!normalized || normalized.length < 40) {
+    return null;
+  }
+
+  if (
+    /(найдено\s+\d+\s+ваканс|found\s+\d+\s+vacanc)/i.test(normalized) &&
+    !/(отклик|apply|salary|зарплат)/i.test(normalized)
+  ) {
+    return null;
+  }
+
+  const hasRoleSignals =
+    /(engineer|developer|scientist|analyst|manager|architect|qa|devops|designer|product|data|ai|ml|инженер|разработчик|аналитик|менеджер|архитектор|тестиров|дизайнер)/i.test(
+      normalized,
+    );
+  const hasDetailSignals =
+    /(отклик|apply|experience|опыт|salary|зарплат|per month|за месяц|удален|remote|руб|₽|\$|€|location|локац|гибрид|офис)/i.test(
+      normalized,
+    );
+  if (!(hasRoleSignals && hasDetailSignals)) {
+    return null;
+  }
+
+  if (
+    /(активн\w*\s+ваканси\w*\s+посмотр|active\s+vacanc(?:y|ies)\s+view)/i.test(normalized) &&
+    !/(отклик|apply|salary|зарплат|опыт|experience)/i.test(normalized)
+  ) {
+    return null;
+  }
+
+  return `vacancy:list:${stableHash(normalized.slice(0, 260))}`;
+}
+
+function sanitizeCurrentVacancyFingerprint(current: string | null): string | null {
+  if (!current) {
+    return null;
+  }
+  if (current.startsWith("url:") && current.toLowerCase().includes("/search/vacancy")) {
+    return null;
+  }
+  return current;
+}
+
+function classifyJobControlIntent(label: string): "apply" | "other" {
+  const normalized = label.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return "other";
+  }
+
+  if (
+    /(apply|quick apply|respond|response|send application|отклик|откликнуться|отправить отклик|отправить резюме|подать заявку)/i.test(
+      normalized,
+    )
+  ) {
+    return "apply";
+  }
+
+  return "other";
+}
+
+function isLikelyCoverLetterLabel(label: string): boolean {
+  const normalized = label.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return /(cover[\s-]*letter|motivation|message to employer|сопровод|письмо работодателю|комментарий к отклику)/i.test(
+    normalized,
+  );
+}
+
+function isResumePromoCardLabel(label: string): boolean {
+  const normalized = label.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+  return /(hh\s*pro|подписк|преимуществ\w*\s+подписк|готовое\s+резюме|репетиция\s+собеседования|карьерн\w*\s+консульт|ментор|наставник|доверьте\s+составление\s+резюме|скидк|до\s+\d{1,2}\.\d{1,2})/i.test(
+    normalized,
+  );
+}
+
+function isLikelyResumeEntryLabel(label: string): boolean {
+  const normalized = label.toLowerCase().replace(/\s+/g, " ").trim();
+  if (!normalized || isResumePromoCardLabel(normalized)) {
+    return false;
+  }
+  return /(резюм|resume|cv|обновлен|редактировать|поднять\s+в\s+поиске|просмотр\w*|желаемая\s+должность|желаемая\s+зарплата|постоянная\s+работа|fullstack|разработчик|инженер|уровень\s+дохода|удал[её]нно|опыт\s+работы)/i.test(
+    normalized,
+  );
+}
+
+function isMeaningfulVacancyExtraction(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (!normalized) {
+    return false;
+  }
+
+  if (normalized.length >= 280) {
+    return true;
+  }
+
+  const hasRoleSignals =
+    /(engineer|developer|scientist|analyst|manager|architect|qa|devops|designer|product|data|ai|ml|инженер|разработчик|аналитик|менеджер|архитектор|тестиров|дизайнер)/i.test(
+      normalized,
+    );
+  const hasDetailSignals =
+    /(requirement|responsibilit|qualification|skills?|experience|salary|location|about the role|отклик|требован|обязанност|навык|опыт|зарплат|локац)/i.test(
+      normalized,
+    );
+
+  return hasRoleSignals && hasDetailSignals;
+}
+
+async function clickNestedApplyControl(locator: Locator): Promise<boolean> {
+  return locator
+    .evaluate((element) => {
+      const root = element as HTMLElement;
+      const normalize = (value: string | null | undefined) =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (node: HTMLElement): boolean => {
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      };
+      const isEnabled = (node: HTMLElement): boolean =>
+        !node.hasAttribute("disabled") && node.getAttribute("aria-disabled") !== "true";
+      const isApplyLike = (text: string): boolean =>
+        /(apply|quick apply|respond|response|send application|отклик|откликнуться|отправить отклик|отправить резюме|подать заявку|vacancy[-_].*response|vacancy-serp__vacancy_response|vacancy_response)/i.test(
+          text,
+        );
+
+      const candidates: HTMLElement[] = [];
+      if (root) {
+        candidates.push(root);
+      }
+      for (const node of Array.from(
+        root.querySelectorAll<HTMLElement>(
+          "button,a,[role='button'],input[type='submit'],input[type='button']",
+        ),
+      )) {
+        candidates.push(node);
+      }
+
+      for (const candidate of candidates) {
+        if (!isVisible(candidate) || !isEnabled(candidate)) {
+          continue;
+        }
+        const label = [
+          normalize(candidate.innerText || candidate.textContent || ""),
+          normalize(candidate.getAttribute("aria-label")),
+          normalize(candidate.getAttribute("title")),
+          normalize(candidate.getAttribute("name")),
+          normalize(candidate.getAttribute("data-qa")),
+        ]
+          .filter(Boolean)
+          .join(" ");
+        if (!label) {
+          continue;
+        }
+        if (isApplyLike(label)) {
+          candidate.click();
+          return true;
+        }
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
+async function clickNestedPrimaryLink(locator: Locator): Promise<boolean> {
+  return locator
+    .evaluate((element) => {
+      const root = element as HTMLElement;
+      const normalize = (value: string | null | undefined) =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (node: HTMLElement): boolean => {
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      };
+
+      const links = Array.from(root.querySelectorAll<HTMLAnchorElement>("a[href]"));
+      if (links.length === 0) {
+        return false;
+      }
+
+      const scored = links
+        .map((link) => {
+          const href = normalize(link.getAttribute("href") || link.href);
+          if (!href || href.startsWith("#") || href.startsWith("javascript:")) {
+            return null;
+          }
+
+          let score = 0;
+          const label = normalize(link.innerText || link.textContent || "");
+          if (label.length >= 8) {
+            score += Math.min(label.length, 80);
+          }
+          if (/vacanc|job|career|работ|ваканс|position/i.test(href)) {
+            score += 140;
+          }
+          if (/vacanc|job|engineer|работ|ваканс|инженер/i.test(label)) {
+            score += 80;
+          }
+          if (link.target === "_blank") {
+            score += 20;
+          }
+          return {
+            link,
+            score,
+          };
+        })
+        .filter((item): item is { link: HTMLAnchorElement; score: number } => item !== null)
+        .sort((left, right) => right.score - left.score);
+
+      for (const item of scored) {
+        const candidate = item.link;
+        if (!isVisible(candidate)) {
+          continue;
+        }
+        candidate.click();
+        return true;
+      }
+
+      return false;
+    })
+    .catch(() => false);
+}
+
+async function clickVisibleApplyControl(page: Page): Promise<boolean> {
+  return page
+    .evaluate(() => {
+      const normalize = (value: string | null | undefined) =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const isVisible = (node: HTMLElement): boolean => {
+        const style = window.getComputedStyle(node);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = node.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      };
+      const isEnabled = (node: HTMLElement): boolean =>
+        !node.hasAttribute("disabled") && node.getAttribute("aria-disabled") !== "true";
+      const isApplyLike = (text: string): boolean =>
+        /(apply|quick apply|respond|response|send application|отклик|откликнуться|отправить отклик|отправить резюме|подать заявку|vacancy[-_].*response|vacancy-serp__vacancy_response|vacancy_response)/i.test(
+          text,
+        );
+
+      const controls = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "button,a,[role='button'],input[type='submit'],input[type='button']",
+        ),
+      );
+      for (const control of controls) {
+        if (!isVisible(control) || !isEnabled(control)) {
+          continue;
+        }
+        const label = [
+          normalize(control.innerText || control.textContent || ""),
+          normalize(control.getAttribute("aria-label")),
+          normalize(control.getAttribute("title")),
+          normalize(control.getAttribute("name")),
+          normalize(control.getAttribute("data-qa")),
+        ]
+          .filter(Boolean)
+          .join(" ");
+        if (!label) {
+          continue;
+        }
+        if (isApplyLike(label)) {
+          control.click();
+          return true;
+        }
+      }
+      return false;
+    })
+    .catch(() => false);
+}
+
+async function detectApplyConfirmation(
+  page: Page,
+  locator: Locator,
+): Promise<{ confirmed: boolean; evidence: string | null }> {
+  const confirmationRe =
+    /(вы\s+откликнул|отклик\s+отправлен|резюме\s+отправлен|уже\s+откликнул|отменить\s+отклик|application\s+sent|already\s+applied|withdraw\s+application|applied\s+success)/i;
+
+  const fromControl = await locator
+    .evaluate((element) => {
+      const normalize = (value: string | null | undefined) =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const html = element as HTMLElement;
+      const className = (() => {
+        const raw = html.className;
+        if (typeof raw === "string") {
+          return raw;
+        }
+        if (typeof (raw as { baseVal?: string } | null)?.baseVal === "string") {
+          return (raw as { baseVal?: string }).baseVal ?? "";
+        }
+        return "";
+      })();
+
+      return [
+        normalize(html.innerText || html.textContent || ""),
+        normalize(html.getAttribute("aria-label")),
+        normalize(html.getAttribute("title")),
+        normalize(className),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .slice(0, 400);
+    })
+    .catch(() => "");
+  if (fromControl && confirmationRe.test(fromControl)) {
+    return {
+      confirmed: true,
+      evidence: fromControl,
+    };
+  }
+
+  const fromPage = await page
+    .evaluate(() => {
+      const normalize = (value: string | null | undefined) =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+      const body = normalize(document.body?.innerText || "");
+      return body.slice(0, 2400);
+    })
+    .catch(() => "");
+
+  if (fromPage && confirmationRe.test(fromPage)) {
+    return {
+      confirmed: true,
+      evidence: fromPage.slice(0, 260),
+    };
+  }
+
+  return {
+    confirmed: false,
+    evidence: null,
+  };
+}
+
+function resolveCurrentVacancyFingerprint(
+  current: string | null,
+  beforeUrl: string,
+  afterUrl: string,
+  fallbackText = "",
+): string | null {
+  const fromAfterUrl = vacancyFingerprintFromUrl(afterUrl);
+  if (fromAfterUrl) {
+    return fromAfterUrl;
+  }
+  const fromBeforeUrl = vacancyFingerprintFromUrl(beforeUrl);
+  if (fromBeforeUrl) {
+    return fromBeforeUrl;
+  }
+  const fromText = vacancyFingerprintFromText(fallbackText);
+  if (fromText) {
+    return fromText;
+  }
+  return sanitizeCurrentVacancyFingerprint(current);
+}
+
+function jobProgress(context: ToolContext): {
+  enabled: boolean;
+  targetApplyCount: number;
+  openedVacancies: number;
+  extractedVacancies: number;
+  appliedVacancies: number;
+  coverLetters: number;
+  currentVacancyFingerprint: string | null;
+} {
+  const job = context.runtimeStats.jobApplication;
+  return {
+    enabled: job.enabled,
+    targetApplyCount: job.targetApplyCount,
+    openedVacancies: job.openedVacancyFingerprints.size,
+    extractedVacancies: job.extractedVacancyFingerprints.size,
+    appliedVacancies: job.appliedVacancyFingerprints.size,
+    coverLetters: job.coverLetterVacancyFingerprints.size,
+    currentVacancyFingerprint: job.currentVacancyFingerprint,
+  };
 }
 
 function normalizeFingerprintPart(value: string | null | undefined): string {
@@ -1275,6 +1794,9 @@ export function createToolDefinitions(): ToolSpec[] {
           ok: true,
           observation: {
             ...state,
+            jobApplication: context.runtimeStats.jobApplication.enabled
+              ? jobProgress(context)
+              : undefined,
             mailboxScan: context.runtimeStats.mailboxScan.enabled
               ? {
                   ...mailboxProgress(context),
@@ -1310,7 +1832,12 @@ export function createToolDefinitions(): ToolSpec[] {
         const result = await context.inspector.queryDom(args.question, args.maxResults);
         return {
           ok: true,
-          observation: result,
+          observation: {
+            ...result,
+            jobApplication: context.runtimeStats.jobApplication.enabled
+              ? jobProgress(context)
+              : undefined,
+          },
         };
       },
     },
@@ -1339,12 +1866,21 @@ export function createToolDefinitions(): ToolSpec[] {
         required: ["elementId"],
       },
       execute: async (args, context) => {
-        const page = context.browser.getPage();
+        let page = context.browser.getPage();
         const mailboxScan = context.runtimeStats.mailboxScan;
+        const job = context.runtimeStats.jobApplication;
         const requestedCartAddCount = context.runtimeStats.policy.requestedCartAddCount;
         let targetElementId = args.elementId;
         let selectedCandidate: InboxCandidate | null = null;
         let cartIntentBefore: "add" | "already_in_cart" | "other" = "other";
+        let jobIntentBefore: "apply" | "other" = "other";
+        let clickedNestedPrimaryLink = false;
+        let clickedNestedApplyControl = false;
+        let fallbackApplyClick = false;
+        let applyConfirmed = false;
+        let applyConfirmationEvidence: string | null = null;
+        let switchedToNewPage = false;
+        let selectedNewPageUrl: string | null = null;
 
         const runtimeSecurityResult = await enforceRuntimeSecurityGate(context, {
           actionName: "click_element",
@@ -1503,6 +2039,7 @@ export function createToolDefinitions(): ToolSpec[] {
         try {
           const beforeUrl = page.url();
           const beforeTitle = await page.title().catch(() => "");
+          const openPagesBeforeClick = context.browser.captureOpenPages();
           const meta = await locator.evaluate((element) => {
             const html = element as HTMLElement;
             const normalize = (value: string | null | undefined) =>
@@ -1644,7 +2181,40 @@ export function createToolDefinitions(): ToolSpec[] {
             .filter(Boolean)
             .join(" ")
             .slice(0, 280);
+          if (job.enabled && /\/applicant\/resumes(?:\/|$|\?)/i.test(beforeUrl)) {
+            if (isResumePromoCardLabel(cartControlLabel)) {
+              const currentState = await context.inspector.getPageState();
+              const visibleResumeCandidates = currentState.interactiveElements
+                .filter((element) =>
+                  isLikelyResumeEntryLabel(
+                    `${compact(element.name, 120)} ${compact(element.description, 120)}`,
+                  ),
+                )
+                .slice(0, 8)
+                .map((element) => ({
+                  elementId: element.elementId,
+                  tag: element.tag,
+                  role: element.role,
+                  name: compact(element.name, 140),
+                }));
+
+              return {
+                ok: false,
+                observation: {
+                  message:
+                    "Selected element looks like a promotional card (resume service), not a user resume entry.",
+                  requestedElementId: args.elementId,
+                  elementId: targetElementId,
+                  recoverable: true,
+                  nextActionHint:
+                    "Pick an actual resume item (title/role/experience), skip promo cards with discounts/services.",
+                  visibleResumeCandidates,
+                },
+              };
+            }
+          }
           cartIntentBefore = classifyCartControlIntent(cartControlLabel);
+          jobIntentBefore = classifyJobControlIntent(cartControlLabel);
           if (
             requestedCartAddCount !== null &&
             cartIntentBefore === "add" &&
@@ -1749,19 +2319,60 @@ export function createToolDefinitions(): ToolSpec[] {
           }
 
           await locator.scrollIntoViewIfNeeded({ timeout: 2500 });
-          await locator.click({
-            button: args.button,
-            clickCount: args.doubleClick ? 2 : 1,
-            timeout: 8000,
-          });
+          if (job.enabled && looksLikeListItem && jobIntentBefore !== "apply") {
+            clickedNestedPrimaryLink = await clickNestedPrimaryLink(locator);
+          }
+          if (job.enabled && jobIntentBefore === "apply" && !clickedNestedPrimaryLink) {
+            clickedNestedApplyControl = await clickNestedApplyControl(locator);
+          }
+          if (!clickedNestedPrimaryLink && !clickedNestedApplyControl) {
+            await locator.click({
+              button: args.button,
+              clickCount: args.doubleClick ? 2 : 1,
+              timeout: 8000,
+            });
+          }
           await page.waitForTimeout(220);
-          const afterUrl = page.url();
-          const afterTitle = await page.title().catch(() => "");
+          const tabSwitch = await context.browser.switchToNewlyOpenedPage(
+            openPagesBeforeClick,
+            beforeUrl,
+          );
+          if (tabSwitch.newPageDetected) {
+            switchedToNewPage = tabSwitch.switched;
+            selectedNewPageUrl = tabSwitch.selectedUrl;
+            if (switchedToNewPage) {
+              page = context.browser.getPage();
+              await page.waitForLoadState("domcontentloaded", { timeout: 4000 }).catch(() => undefined);
+            }
+          }
+
+          let afterUrl = page.url();
+          let afterTitle = await page.title().catch(() => "");
+
+          if (job.enabled) {
+            const previewFingerprint = vacancyFingerprintFromText(meta.textPreview);
+            const urlFingerprint =
+              vacancyFingerprintFromUrl(afterUrl) ?? vacancyFingerprintFromUrl(beforeUrl);
+            const openedFingerprint = resolveCurrentVacancyFingerprint(
+              job.currentVacancyFingerprint,
+              beforeUrl,
+              afterUrl,
+              meta.textPreview,
+            );
+            if (openedFingerprint) {
+              job.currentVacancyFingerprint = openedFingerprint;
+              const openedByNavigation = Boolean(urlFingerprint) && afterUrl !== beforeUrl;
+              const openedByListSelection = looksLikeListItem && Boolean(previewFingerprint);
+              if (openedByNavigation || openedByListSelection) {
+                job.openedVacancyFingerprints.add(openedFingerprint);
+              }
+            }
+          }
 
           if (requestedCartAddCount !== null) {
             let confirmedCartAdd = cartIntentBefore === "add";
 
-            if (!confirmedCartAdd && afterUrl === beforeUrl) {
+            if (!confirmedCartAdd && afterUrl === beforeUrl && !switchedToNewPage) {
               const postClickLabel = await page
                 .locator(selector())
                 .first()
@@ -1813,6 +2424,48 @@ export function createToolDefinitions(): ToolSpec[] {
                 context.runtimeStats.cartAddActions < requestedCartAddCount
               ) {
                 context.runtimeStats.cartAddActions += 1;
+              }
+            }
+          }
+
+          if (job.enabled && jobIntentBefore === "apply") {
+            let confirmation = await detectApplyConfirmation(page, locator);
+
+            if (!confirmation.confirmed) {
+              const openPagesBeforeFallbackApply = context.browser.captureOpenPages();
+              fallbackApplyClick = await clickVisibleApplyControl(page);
+              if (fallbackApplyClick) {
+                await page.waitForTimeout(220);
+                const fallbackTabSwitch = await context.browser.switchToNewlyOpenedPage(
+                  openPagesBeforeFallbackApply,
+                  page.url(),
+                );
+                if (fallbackTabSwitch.newPageDetected && fallbackTabSwitch.switched) {
+                  switchedToNewPage = true;
+                  selectedNewPageUrl = fallbackTabSwitch.selectedUrl;
+                  page = context.browser.getPage();
+                  await page
+                    .waitForLoadState("domcontentloaded", { timeout: 4000 })
+                    .catch(() => undefined);
+                }
+                afterUrl = page.url();
+                afterTitle = await page.title().catch(() => "");
+                confirmation = await detectApplyConfirmation(page, locator);
+              }
+            }
+
+            applyConfirmed = confirmation.confirmed || afterUrl !== beforeUrl;
+            applyConfirmationEvidence = confirmation.evidence;
+
+            if (applyConfirmed) {
+              const vacancyFingerprint = resolveCurrentVacancyFingerprint(
+                job.currentVacancyFingerprint,
+                beforeUrl,
+                afterUrl,
+              );
+              if (vacancyFingerprint) {
+                job.appliedVacancyFingerprints.add(vacancyFingerprint);
+                job.currentVacancyFingerprint = vacancyFingerprint;
               }
             }
           }
@@ -1873,6 +2526,41 @@ export function createToolDefinitions(): ToolSpec[] {
           }
         } catch (error) {
           const message = error instanceof Error ? error.message : String(error);
+          if (/execution context was destroyed|most likely because of a navigation/i.test(message)) {
+            await page.waitForTimeout(250);
+            const recoveredState = await context.inspector.getPageState();
+            const recoveredCandidates = updateMailboxListState(context, recoveredState);
+            return {
+              ok: true,
+              observation: {
+                clickedElementId: targetElementId,
+                requestedElementId: args.elementId,
+                recoveredFromNavigationRace: true,
+                errorHint: message,
+                currentUrl: recoveredState.url,
+                postClickState: {
+                  url: recoveredState.url,
+                  title: recoveredState.title,
+                  summary: recoveredState.summary,
+                  topInteractiveElements: recoveredState.interactiveElements
+                    .slice(0, 10)
+                    .map((item) => ({
+                      elementId: item.elementId,
+                      tag: item.tag,
+                      role: item.role,
+                      name: item.name,
+                    })),
+                },
+                mailboxScan: mailboxScan.enabled
+                  ? {
+                      ...mailboxProgress(context),
+                      candidates: recoveredCandidates.slice(0, 20),
+                    }
+                  : undefined,
+                jobApplication: job.enabled ? jobProgress(context) : undefined,
+              },
+            };
+          }
           return {
             ok: false,
             observation: {
@@ -1894,6 +2582,14 @@ export function createToolDefinitions(): ToolSpec[] {
           observation: {
             clickedElementId: targetElementId,
             requestedElementId: args.elementId,
+            clickedNestedPrimaryLink,
+            clickedNestedApplyControl,
+            fallbackApplyClick,
+            applyConfirmed: job.enabled && jobIntentBefore === "apply" ? applyConfirmed : undefined,
+            applyConfirmationEvidence:
+              job.enabled && jobIntentBefore === "apply" ? applyConfirmationEvidence : undefined,
+            switchedToNewPage,
+            selectedNewPageUrl,
             button: args.button,
             doubleClick: args.doubleClick,
             currentUrl: page.url(),
@@ -1924,6 +2620,7 @@ export function createToolDefinitions(): ToolSpec[] {
                     cartAddSkips: context.runtimeStats.cartAddSkips,
                   }
                 : undefined,
+            jobApplication: job.enabled ? jobProgress(context) : undefined,
           },
         };
       },
@@ -1966,6 +2663,7 @@ export function createToolDefinitions(): ToolSpec[] {
         }
 
         const page = context.browser.getPage();
+        const job = context.runtimeStats.jobApplication;
         const selector = `[data-agent-id="${args.elementId}"]`;
         const buildRecoveryObservation = async (message: string) => {
           const freshState = await context.inspector.getPageState();
@@ -2023,17 +2721,154 @@ export function createToolDefinitions(): ToolSpec[] {
           };
         }
 
-        await locator.scrollIntoViewIfNeeded({ timeout: 2500 });
-        await locator.click({ timeout: 8000 });
-        if (args.clearFirst) {
-          await page.keyboard.press("Control+A");
-          await page.keyboard.press("Backspace");
+        const inputMeta = await locator
+          .evaluate((element) => {
+            const html = element as HTMLElement;
+            const normalize = (value: string | null | undefined) =>
+              (value ?? "").replace(/\s+/g, " ").trim();
+            const tag = html.tagName.toLowerCase();
+            const role = normalize(html.getAttribute("role")).toLowerCase();
+            const type =
+              html instanceof HTMLInputElement ? normalize(html.type).toLowerCase() : "";
+            const contentEditable =
+              normalize(html.getAttribute("contenteditable")).toLowerCase() === "true";
+            const inputLike =
+              tag === "textarea" ||
+              tag === "select" ||
+              (tag === "input" &&
+                !["button", "submit", "reset", "checkbox", "radio"].includes(type)) ||
+              role === "textbox" ||
+              role === "combobox" ||
+              contentEditable;
+
+            const label = [
+              normalize(html.innerText || html.textContent || ""),
+              normalize(html.getAttribute("aria-label")),
+              normalize(html.getAttribute("placeholder")),
+              normalize(html.getAttribute("title")),
+              normalize(html.getAttribute("name")),
+              normalize(type),
+              normalize(html.id || ""),
+            ]
+              .filter(Boolean)
+              .join(" ")
+              .slice(0, 300);
+
+            return {
+              inputLike,
+              tag,
+              role,
+              type,
+              label,
+            };
+          })
+          .catch(() => ({
+            inputLike: false,
+            tag: "",
+            role: "",
+            type: "",
+            label: "",
+          }));
+
+        if (!inputMeta.inputLike) {
+          return {
+            ok: false,
+            observation: await buildRecoveryObservation(
+              `Element ${args.elementId} is not an input field (tag=${inputMeta.tag || "unknown"}, role=${inputMeta.role || "none"}).`,
+            ),
+          };
         }
-        await locator.type(args.text, { delay: 20 });
-        if (args.submit) {
-          await page.keyboard.press("Enter");
+
+        let coverLetterFieldDetected = false;
+        if (job.enabled) {
+          coverLetterFieldDetected = isLikelyCoverLetterLabel(inputMeta.label);
         }
-        await page.waitForTimeout(250);
+
+        const interactionTrace: string[] = [];
+        const supportsFill =
+          inputMeta.tag === "input" ||
+          inputMeta.tag === "textarea" ||
+          inputMeta.role === "textbox" ||
+          inputMeta.role === "combobox";
+
+        try {
+          await locator.scrollIntoViewIfNeeded({ timeout: 2500 });
+          interactionTrace.push("scrollIntoViewIfNeeded:ok");
+        } catch {
+          interactionTrace.push("scrollIntoViewIfNeeded:skip");
+        }
+
+        try {
+          await locator.focus({ timeout: 4000 });
+          interactionTrace.push("focus:ok");
+        } catch {
+          interactionTrace.push("focus:fallback");
+          try {
+            await locator.click({ timeout: 3500, force: true });
+            interactionTrace.push("click(force):ok");
+          } catch {
+            interactionTrace.push("click(force):failed");
+          }
+        }
+
+        try {
+          if (args.clearFirst) {
+            if (supportsFill) {
+              await locator.fill("");
+              interactionTrace.push("clear:fill");
+            } else {
+              await page.keyboard.press("Control+A");
+              await page.keyboard.press("Backspace");
+              interactionTrace.push("clear:keyboard");
+            }
+          }
+
+          if (supportsFill) {
+            await locator.fill(args.text);
+            interactionTrace.push("type:fill");
+          } else {
+            await locator.type(args.text, { delay: 20 });
+            interactionTrace.push("type:keyboard");
+          }
+
+          if (args.submit) {
+            try {
+              await locator.press("Enter");
+              interactionTrace.push("submit:locator-press");
+            } catch {
+              await page.keyboard.press("Enter");
+              interactionTrace.push("submit:page-press");
+            }
+          }
+
+          await page.waitForTimeout(250);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          return {
+            ok: false,
+            observation: {
+              ...(await buildRecoveryObservation(
+                `Input interaction failed for ${args.elementId}.`,
+              )),
+              recoverable: true,
+              error: message,
+              interactionTrace,
+            },
+          };
+        }
+
+        if (job.enabled && coverLetterFieldDetected && args.text.trim().length >= 30) {
+          const pageUrl = page.url();
+          const vacancyFingerprint = resolveCurrentVacancyFingerprint(
+            job.currentVacancyFingerprint,
+            pageUrl,
+            pageUrl,
+          );
+          if (vacancyFingerprint) {
+            job.coverLetterVacancyFingerprints.add(vacancyFingerprint);
+            job.currentVacancyFingerprint = vacancyFingerprint;
+          }
+        }
 
         return {
           ok: true,
@@ -2041,6 +2876,8 @@ export function createToolDefinitions(): ToolSpec[] {
             elementId: args.elementId,
             typedChars: args.text.length,
             submitted: args.submit,
+            coverLetterFieldDetected,
+            jobApplication: job.enabled ? jobProgress(context) : undefined,
           },
         };
       },
@@ -2174,6 +3011,7 @@ export function createToolDefinitions(): ToolSpec[] {
       execute: async (args, context) => {
         const page = context.browser.getPage();
         const mailboxScan = context.runtimeStats.mailboxScan;
+        const job = context.runtimeStats.jobApplication;
         const requestedCartAddCount = context.runtimeStats.policy.requestedCartAddCount;
         if (
           mailboxScan.enabled &&
@@ -2390,6 +3228,23 @@ export function createToolDefinitions(): ToolSpec[] {
           context.runtimeStats.cartAddActions += 1;
         }
 
+        if (job.enabled) {
+          const currentUrl = page.url();
+          const vacancyFingerprint = resolveCurrentVacancyFingerprint(
+            job.currentVacancyFingerprint,
+            currentUrl,
+            currentUrl,
+            args.elementId ? text : "",
+          );
+          if (vacancyFingerprint) {
+            job.openedVacancyFingerprints.add(vacancyFingerprint);
+            if (isMeaningfulVacancyExtraction(text)) {
+              job.extractedVacancyFingerprints.add(vacancyFingerprint);
+            }
+            job.currentVacancyFingerprint = vacancyFingerprint;
+          }
+        }
+
         if (mailboxScan.enabled) {
           const metadata = await readMessageMetadata(context);
           const threadOrMessageId = extractThreadOrMessageIdFromUrl(metadata.url);
@@ -2490,6 +3345,7 @@ export function createToolDefinitions(): ToolSpec[] {
               subject,
               snippet,
               mailboxScan: mailboxProgress(context),
+              jobApplication: job.enabled ? jobProgress(context) : undefined,
             },
           };
         }
@@ -2500,6 +3356,7 @@ export function createToolDefinitions(): ToolSpec[] {
             elementId: args.elementId ?? null,
             extractedText: text,
             mailboxScan: mailboxScan.enabled ? mailboxProgress(context) : undefined,
+            jobApplication: job.enabled ? jobProgress(context) : undefined,
           },
         };
       },
@@ -2521,6 +3378,33 @@ export function createToolDefinitions(): ToolSpec[] {
         required: ["question"],
       },
       execute: async (args, context) => {
+        if (
+          context.runtimeStats.policy.jobApplicationFlow &&
+          isResumeSelectionQuestion(args.question)
+        ) {
+          try {
+            const state = await context.inspector.getPageState();
+            const singleResume = detectSingleVisibleResumeOption(state);
+            if (singleResume) {
+              const autoResponse = `Use the only visible resume: ${singleResume.label}`;
+              return {
+                ok: true,
+                observation: {
+                  question: args.question,
+                  userResponse: autoResponse,
+                  autoResolved: true,
+                  resolution: "single_visible_resume_detected",
+                  resumeElementId: singleResume.elementId,
+                  resumeLabel: singleResume.label,
+                  currentUrl: state.url,
+                },
+              };
+            }
+          } catch {
+            // Fall through to explicit user prompt if inspection fails.
+          }
+        }
+
         const userResponse = (await context.askUserInput(args.question)).trim();
         if (userResponse.length === 0) {
           return {
@@ -2622,6 +3506,37 @@ export function createToolDefinitions(): ToolSpec[] {
           };
         }
 
+        const job = context.runtimeStats.jobApplication;
+        if (job.enabled) {
+          const targetApplyCount = Math.max(1, job.targetApplyCount);
+          const openedVacancies = job.openedVacancyFingerprints.size;
+          const extractedVacancies = job.extractedVacancyFingerprints.size;
+          const appliedVacancies = job.appliedVacancyFingerprints.size;
+          const coverLetters = job.coverLetterVacancyFingerprints.size;
+
+          if (
+            extractedVacancies < targetApplyCount ||
+            appliedVacancies < targetApplyCount ||
+            coverLetters < targetApplyCount
+          ) {
+            return {
+              ok: false,
+              observation: {
+                message:
+                  `Cannot finish yet: job-application target = ${targetApplyCount}, ` +
+                  `opened/read/cover/applied = ${openedVacancies}/${extractedVacancies}/${coverLetters}/${appliedVacancies}. ` +
+                  "Continue vacancy loop (SEARCH_LIST -> OPEN_VACANCY -> EXTRACT_REQUIREMENTS -> APPLY_WITH_COVER_LETTER).",
+                targetApplyCount,
+                openedVacancies,
+                extractedVacancies,
+                coverLetters,
+                appliedVacancies,
+                jobApplication: jobProgress(context),
+              },
+            };
+          }
+        }
+
         const requiredCartAddCount = context.runtimeStats.policy.requestedCartAddCount;
         if (
           requiredCartAddCount !== null &&
@@ -2654,7 +3569,11 @@ export function createToolDefinitions(): ToolSpec[] {
         }
 
         const requestedCount = parseRequestedItemCount(context.userGoal);
-        if (requestedCount && requiredCartAddCount === null) {
+        if (
+          requestedCount &&
+          requiredCartAddCount === null &&
+          !context.runtimeStats.jobApplication.enabled
+        ) {
           const openedCount = context.runtimeStats.clickedListSignatures.size;
           const extractedCount = context.runtimeStats.extractedElementIds.size;
           const effectiveCount = openedCount;
@@ -2684,6 +3603,9 @@ export function createToolDefinitions(): ToolSpec[] {
             status: args.status,
             summary: args.summary,
             nextSteps: args.nextSteps,
+            jobApplication: context.runtimeStats.jobApplication.enabled
+              ? jobProgress(context)
+              : undefined,
           },
           control: {
             type: "finish",

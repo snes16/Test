@@ -1,7 +1,12 @@
 ﻿import { ZodTypeAny } from "zod";
 import { BrowserManager } from "../browser/browser-manager";
 import { PageInspector } from "../observation/page-inspector";
-import { MailboxScanRuntime, TaskPolicy, ToolExecutionResult } from "../types";
+import {
+  JobApplicationRuntime,
+  MailboxScanRuntime,
+  TaskPolicy,
+  ToolExecutionResult,
+} from "../types";
 
 export interface RuntimeStats {
   clickedElementIds: Set<string>;
@@ -14,6 +19,7 @@ export interface RuntimeStats {
   cartAddSkips: number;
   policy: TaskPolicy;
   mailboxScan: MailboxScanRuntime;
+  jobApplication: JobApplicationRuntime;
 }
 
 export interface ToolContext {

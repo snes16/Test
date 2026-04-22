@@ -163,6 +163,64 @@ export class BrowserManager {
     return this.getPage().url();
   }
 
+  captureOpenPages(): Page[] {
+    return this.collectOpenPageCandidates().map((candidate) => candidate.page);
+  }
+
+  async switchToNewlyOpenedPage(
+    previousPages: Page[],
+    preferredUrl?: string,
+    timeoutMs = 1200,
+  ): Promise<{
+    switched: boolean;
+    newPageDetected: boolean;
+    currentUrl: string;
+    selectedUrl: string;
+  }> {
+    const beforeSet = new Set(previousPages);
+    const baselinePage = this.page;
+    const baselineUrl = baselinePage && !baselinePage.isClosed() ? baselinePage.url() : "";
+    const preferredHost = normalizeHost(preferredUrl ?? baselineUrl);
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+
+    while (true) {
+      const candidates = this.collectOpenPageCandidates();
+      const newcomers = candidates.filter((candidate) => !beforeSet.has(candidate.page));
+      if (newcomers.length > 0) {
+        newcomers.sort((left, right) => {
+          const rightScore = this.scorePage(right.page.url(), preferredHost);
+          const leftScore = this.scorePage(left.page.url(), preferredHost);
+          return rightScore - leftScore;
+        });
+        const selected = newcomers[0];
+        this.context = selected.context;
+        this.page = selected.page;
+        await this.page.bringToFront().catch(() => undefined);
+        const selectedUrl = this.page.url();
+        return {
+          switched: baselinePage !== this.page,
+          newPageDetected: true,
+          currentUrl: baselineUrl,
+          selectedUrl,
+        };
+      }
+
+      if (Date.now() >= deadline) {
+        break;
+      }
+      await new Promise<void>((resolve) => setTimeout(resolve, 120));
+    }
+
+    const currentPage = this.page && !this.page.isClosed() ? this.page : baselinePage;
+    const selectedUrl = currentPage && !currentPage.isClosed() ? currentPage.url() : "";
+    return {
+      switched: false,
+      newPageDetected: false,
+      currentUrl: baselineUrl,
+      selectedUrl,
+    };
+  }
+
   async switchToBestPage(preferredUrl?: string): Promise<{
     switched: boolean;
     currentUrl: string;
@@ -227,6 +285,26 @@ export class BrowserManager {
 
     candidates.sort((a, b) => b.score - a.score);
     return candidates[0];
+  }
+
+  private collectOpenPageCandidates(): PageCandidate[] {
+    const contexts =
+      this.browser?.contexts() ??
+      (this.context ? [this.context] : []);
+    const candidates: PageCandidate[] = [];
+    for (const context of contexts) {
+      for (const page of context.pages()) {
+        if (page.isClosed()) {
+          continue;
+        }
+        candidates.push({
+          context,
+          page,
+          score: this.scorePage(page.url(), null),
+        });
+      }
+    }
+    return candidates;
   }
 
   private scorePage(url: string, preferredHost: string | null): number {
