@@ -3,7 +3,7 @@ import path from "node:path";
 import { BrowserAgent } from "../agent/browser-agent";
 import { createOpenAIClientFromEnv, getModelFromEnv } from "../agent/openai-client";
 import { GeneralWebSubAgent } from "../agent/subagents/general-web-sub-agent";
-import { HhJobApplicationSubAgent } from "../agent/subagents/hh-job-application-sub-agent";
+import { JobApplicationSubAgent } from "../agent/subagents/job-application-sub-agent";
 import { MailboxAuditSubAgent } from "../agent/subagents/mailbox-audit-sub-agent";
 import { SubAgentRouter } from "../agent/subagents/sub-agent-router";
 import { createTaskPolicy } from "../agent/task-policy";
@@ -117,7 +117,7 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
   const taskPolicy = createTaskPolicy(options.task);
   const enableSubAgents =
     parseBooleanFromEnv("AGENT_ENABLE_SUBAGENTS") ||
-    taskPolicy.auditReadOnlyMailboxScan ||
+    taskPolicy.mailboxScanFlow ||
     taskPolicy.jobApplicationFlow;
 
   logger.logStatus("Инициализация сессии браузера...");
@@ -179,6 +179,28 @@ export async function runAgentSession(options: SessionOptions): Promise<SessionR
 - Если переход на внешний сайт необходим, сначала кратко объясни причину в намерении.`;
     }
 
+    if (taskPolicy.mailboxScanFlow) {
+      const requiredMessages = Math.max(1, taskPolicy.requestedItemCount ?? 10);
+      const modeLine = taskPolicy.mailboxDeleteRequested
+        ? "- After reading and classifying a message as suspicious/spam, delete or move it to spam, then continue."
+        : taskPolicy.mailboxReadOnly
+          ? "- Read-only mode: do not delete or archive messages."
+          : "- Classify messages as normal/suspicious without destructive actions unless explicitly requested.";
+      const verificationLine = taskPolicy.mailboxDeleteVerificationCodes
+        ? "- Treat verification-code emails (OTP/2FA/login codes) as deletion candidates too."
+        : "";
+
+      effectiveTask = `${effectiveTask}
+
+Additional execution context (mailbox-scan):
+- Process at least ${requiredMessages} unique messages with a strict loop:
+  INBOX_LISTING -> OPEN_MESSAGE -> EXTRACT -> BACK_TO_LIST -> REFRESH_LIST -> NEXT_UNIQUE.
+- Do not finish early before processing the required unique count.
+${modeLine}
+${verificationLine}
+- For deletion actions, act only on clearly suspicious/spam messages based on full message content.`;
+    }
+
     if (taskPolicy.jobApplicationFlow) {
       const searchQueryLine = taskPolicy.jobSearchQueryHint
         ? `- Целевой поисковый запрос вакансий: ${taskPolicy.jobSearchQueryHint}.`
@@ -209,9 +231,9 @@ ${searchQueryLine}
       cartAddSkips: 0,
       policy: taskPolicy,
       mailboxScan: {
-        enabled: taskPolicy.auditReadOnlyMailboxScan,
+        enabled: taskPolicy.mailboxScanFlow,
         requestedCount: taskPolicy.requestedItemCount ?? 0,
-        stage: taskPolicy.auditReadOnlyMailboxScan ? "INBOX_LISTING" : "IDLE",
+        stage: taskPolicy.mailboxScanFlow ? "INBOX_LISTING" : "IDLE",
         listGeneration: 0,
         nextCandidateIndex: 0,
         latestListCandidates: [],
@@ -224,6 +246,7 @@ ${searchQueryLine}
       jobApplication: {
         enabled: taskPolicy.jobApplicationFlow,
         targetApplyCount: Math.max(1, taskPolicy.requestedJobApplyCount ?? 1),
+        profileContextExtracted: false,
         openedVacancyFingerprints: new Set(),
         extractedVacancyFingerprints: new Set(),
         appliedVacancyFingerprints: new Set(),
@@ -261,7 +284,7 @@ ${searchQueryLine}
     if (enableSubAgents) {
       const router = new SubAgentRouter(
         [
-          new HhJobApplicationSubAgent(createAgent),
+          new JobApplicationSubAgent(createAgent),
           new MailboxAuditSubAgent(createAgent),
           new GeneralWebSubAgent(createAgent),
         ],

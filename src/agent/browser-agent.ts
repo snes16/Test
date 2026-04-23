@@ -416,17 +416,103 @@ export class BrowserAgent {
   }
 
   private hasProfileResumeEvidence(state: TaskState): boolean {
+    const currentUrl = this.currentUrlFromState(state);
+    if (currentUrl && this.isLikelyProfileLikeUrl(currentUrl)) {
+      return true;
+    }
+
     const haystack = [
       state.currentPageSummary,
       state.latestObservation,
-      state.knownFacts.slice(-12).join(" "),
+      state.knownFacts.slice(-20).join(" "),
+    ].join(" ");
+
+    if (/(resume|profile|curriculum\s+vitae|\bcv\b|candidate|applicant)/i.test(haystack)) {
+      return true;
+    }
+
+    const inlineUrls = haystack.match(/https?:\/\/[^\s)"'<>]+/gi) ?? [];
+    for (const candidate of inlineUrls) {
+      const normalized = normalizeUrlCandidate(candidate);
+      if (normalized && this.isLikelyProfileLikeUrl(normalized)) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  private hasRoleOrTechSignals(text: string): boolean {
+    return /(?:\bai\b|\bml\b|\bllm\b|\bnlp\b|engineer|developer|scientist|analyst|architect|fullstack|frontend|backend|python|typescript|javascript|react|vue|sql|docker|kubernetes|инженер|разработчик|аналитик|архитектор|фуллстек|фронтенд|бэкенд|дата|данн)/i.test(
+      text,
+    );
+  }
+
+  private hasProfileFieldSignals(text: string): boolean {
+    return /(experience|опыт|skills?|навык|education|образован|salary|зарплат|employment|занятост|contacts?|контакт|summary|о\s+себе|о\s+мне|responsibilit|обязанност|resume|резюме|profile|профил)/i.test(
+      text,
+    );
+  }
+
+  private hasContactSignals(text: string): boolean {
+    return /(?:\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b|\+?\d[\d\s()\-]{8,}\d)/i.test(text);
+  }
+
+  private hasProfileResumeContextSignals(state: TaskState): boolean {
+    const currentUrl = this.currentUrlFromState(state);
+    if (!currentUrl || !this.isLikelyProfileLikeUrl(currentUrl)) {
+      return false;
+    }
+
+    const haystack = [
+      state.currentTitle ?? "",
+      state.currentPageSummary,
+      state.latestObservation,
+      state.knownFacts.slice(-20).join(" "),
     ]
       .join(" ")
-      .toLowerCase();
+      .replace(/\s+/g, " ")
+      .trim();
 
-    return /(resume|cv|profile|резюм|профил|hh\.ru\/profile\/me|hh\.ru\/applicant\/resumes)/i.test(
-      haystack,
-    );
+    if (haystack.length < 80) {
+      return false;
+    }
+
+    const hasRoleOrTech = this.hasRoleOrTechSignals(haystack);
+    const hasProfileFields = this.hasProfileFieldSignals(haystack);
+    const hasContacts = this.hasContactSignals(haystack);
+
+    return (hasRoleOrTech && hasProfileFields) || (hasRoleOrTech && hasContacts);
+  }
+
+  private isLikelyProfileExtractionLoop(state: TaskState): boolean {
+    const currentUrl = this.currentUrlFromState(state);
+    if (!currentUrl || !this.isLikelyProfileLikeUrl(currentUrl)) {
+      return false;
+    }
+
+    const recentActions = state.completedActions.slice(-8);
+    if (recentActions.length < 6) {
+      return false;
+    }
+
+    const extractionActions = recentActions.filter(
+      (action) =>
+        action === "query_dom" ||
+        action === "get_page_state" ||
+        action === "extract_text" ||
+        action === "scroll",
+    ).length;
+    const navigationActions = recentActions.filter(
+      (action) =>
+        action === "navigate_to_url" ||
+        action === "click_element" ||
+        action === "go_back" ||
+        action === "type_text" ||
+        action === "press_key",
+    ).length;
+
+    return extractionActions >= 6 && navigationActions <= 1;
   }
 
   private currentUrlFromState(state: TaskState): string | null {
@@ -461,41 +547,72 @@ export class BrowserAgent {
     return null;
   }
 
-  private buildJobSearchUrl(): string {
+  private buildJobSearchPrompt(): string {
     const hint = (this.options.taskPolicy.jobSearchQueryHint ?? "").trim();
     if (!hint) {
-      return "https://hh.ru/search/vacancy";
+      return "Locate visible job/vacancy search results on the current site.";
     }
-    return `https://hh.ru/search/vacancy?text=${encodeURIComponent(hint)}`;
+    return `Locate visible job/vacancy search results for "${hint}" on the current site.`;
   }
 
-  private isHhProfileLikeUrl(url: string): boolean {
-    const normalized = url.toLowerCase();
-    return (
-      /https?:\/\/(?:www\.)?hh\.ru\/applicant\/resumes(?:\/|\?|$)/i.test(normalized) ||
-      /https?:\/\/(?:www\.)?hh\.ru\/profile\/me(?:\/|\?|$)/i.test(normalized) ||
-      /https?:\/\/(?:www\.)?hh\.ru\/applicant(?:\/|\?|$)/i.test(normalized)
-    );
+  private isLikelyProfileLikeUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname.toLowerCase();
+      return /(profile|resume|curriculum|candidate|applicant|account\/me|\/me(?:\/|$)|\/cv(?:\/|$))/i.test(
+        path,
+      );
+    } catch {
+      return /(profile|resume|curriculum|candidate|applicant|\bcv\b)/i.test(url);
+    }
   }
 
-  private isHhVacancySearchUrl(url: string): boolean {
-    return /https?:\/\/(?:www\.)?hh\.ru\/search\/vacancy(?:\/|\?|$)/i.test(url);
+  private isLikelyJobSearchUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname.toLowerCase();
+      const full = `${path} ${parsed.search.toLowerCase()}`;
+      return /(search|jobs?|vacanc|career|position)/i.test(full) && !/(apply|application|respond|response)/i.test(full);
+    } catch {
+      const normalized = url.toLowerCase();
+      return /(search|jobs?|vacanc|career|position)/i.test(normalized);
+    }
   }
 
-  private isHhVacancyDetailUrl(url: string): boolean {
-    return /https?:\/\/(?:www\.)?hh\.ru\/vacancy\/\d+(?:\/|\?|$)/i.test(url);
+  private isLikelyJobDetailUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      const path = parsed.pathname.toLowerCase();
+      if (!/(job|vacanc|career|position)/i.test(path)) {
+        return false;
+      }
+      if (/(search|list|results?|catalog|apply|application|respond|response)/i.test(path)) {
+        return false;
+      }
+      return /\d{3,}/.test(path) || /\/(job|vacanc|career|position)\//i.test(path);
+    } catch {
+      const normalized = url.toLowerCase();
+      return /(job|vacanc|career|position)/i.test(normalized);
+    }
   }
 
-  private isHhVacancyResponseUrl(url: string): boolean {
-    return /https?:\/\/(?:www\.)?hh\.ru\/applicant\/vacancy_response(?:\/|\?|$)/i.test(url);
+  private isLikelyJobResponseUrl(url: string): boolean {
+    try {
+      const parsed = new URL(url);
+      const path = `${parsed.pathname.toLowerCase()} ${parsed.search.toLowerCase()}`;
+      return /(apply|application|respond|response|submit|checkout\/apply)/i.test(path);
+    } catch {
+      const normalized = url.toLowerCase();
+      return /(apply|application|respond|response|submit)/i.test(normalized);
+    }
   }
 
-  private hasVisitedVacancySearch(state: TaskState): boolean {
+  private hasVisitedJobSearch(state: TaskState): boolean {
     const current = this.currentUrlFromState(state) ?? "";
-    if (this.isHhVacancySearchUrl(current)) {
+    if (this.isLikelyJobSearchUrl(current)) {
       return true;
     }
-    return state.knownFacts.some((fact) => /https?:\/\/(?:www\.)?hh\.ru\/search\/vacancy/i.test(fact));
+    return state.knownFacts.some((fact) => this.isLikelyJobSearchUrl(fact));
   }
 
   private nextMailboxCandidateElementId(): string | null {
@@ -523,11 +640,7 @@ export class BrowserAgent {
       return false;
     }
     const target = Math.max(1, job.targetApplyCount);
-    return (
-      job.appliedVacancyFingerprints.size >= target &&
-      job.extractedVacancyFingerprints.size >= target &&
-      job.coverLetterVacancyFingerprints.size >= target
-    );
+    return job.appliedVacancyFingerprints.size >= target;
   }
 
   private steerMailboxCall(call: FunctionCall): ParsedCall {
@@ -544,56 +657,6 @@ export class BrowserAgent {
       redirected: true,
       reason,
     });
-
-    const job = this.options.runtimeStats.jobApplication;
-    if (job.enabled && this.isJobApplicationComplete() && call.name !== "finish_task") {
-      return rewrite(
-        "finish_task",
-        {
-          status: "completed",
-          summary: "Job application task completed.",
-          nextSteps: [],
-        },
-        `job application completion criteria reached (${job.appliedVacancyFingerprints.size}/${Math.max(1, job.targetApplyCount)})`,
-      );
-    }
-
-    if (job.enabled && call.name === "finish_task" && !this.isJobApplicationComplete()) {
-      const target = Math.max(1, job.targetApplyCount);
-      if (job.extractedVacancyFingerprints.size < target) {
-        return rewrite(
-          "query_dom",
-          {
-            question:
-              "Find the vacancy search results list and identify the next relevant vacancy row/link to open.",
-            maxResults: 8,
-          },
-          `finish_task blocked: vacancies read ${job.extractedVacancyFingerprints.size}/${target}`,
-        );
-      }
-      if (job.coverLetterVacancyFingerprints.size < target) {
-        return rewrite(
-          "query_dom",
-          {
-            question:
-              "Locate the cover-letter field on the current vacancy response form and provide its elementId.",
-            maxResults: 8,
-          },
-          `finish_task blocked: cover letters ${job.coverLetterVacancyFingerprints.size}/${target}`,
-        );
-      }
-      if (job.appliedVacancyFingerprints.size < target) {
-        return rewrite(
-          "query_dom",
-          {
-            question:
-              "Locate the apply/respond button for the current vacancy and provide its elementId.",
-            maxResults: 8,
-          },
-          `finish_task blocked: applied ${job.appliedVacancyFingerprints.size}/${target}`,
-        );
-      }
-    }
 
     const requiredCartAdds = this.options.taskPolicy.requestedCartAddCount;
     if (
@@ -620,8 +683,13 @@ export class BrowserAgent {
     const required = Math.max(1, scan.requestedCount || 10);
     const uniqueOpened = scan.visitedMessages.size;
     const nextElementId = this.nextMailboxCandidateElementId();
+    const cleanupPending =
+      this.options.taskPolicy.mailboxDeleteRequested &&
+      Array.from(scan.visitedMessages.values()).some(
+        (message) => message.classification === "suspicious" && !message.deletionAttempted,
+      );
 
-    if (uniqueOpened >= required) {
+    if (uniqueOpened >= required && !cleanupPending) {
       if (call.name === "finish_task") {
         return { call, redirected: false };
       }
@@ -733,12 +801,12 @@ export class BrowserAgent {
     state: TaskState,
     step: number,
   ): Promise<ExecutedCallOutcome> {
-    const mailboxSteered = this.steerMailboxCall(call);
-    let effectiveCall = mailboxSteered.call;
+    const policySteered = this.steerMailboxCall(call);
+    let effectiveCall = policySteered.call;
 
-    if (mailboxSteered.redirected) {
+    if (policySteered.redirected) {
       this.options.logger.logStatus(
-        `Step ${step}: mailbox policy redirected ${call.name} -> ${effectiveCall.name}. ${mailboxSteered.reason ?? ""}`.trim(),
+        `Step ${step}: runtime policy redirected ${call.name} -> ${effectiveCall.name}. ${policySteered.reason ?? ""}`.trim(),
       );
     }
 
@@ -746,10 +814,30 @@ export class BrowserAgent {
       const args = this.parseToolArgs(effectiveCall.arguments);
       const currentUrl = this.currentUrlFromState(state) ?? "";
       const hasProfileEvidence = this.hasProfileResumeEvidence(state);
-      const visitedVacancySearch = this.hasVisitedVacancySearch(state);
+      const visitedVacancySearch = this.hasVisitedJobSearch(state);
       const targetUrl = typeof args.url === "string" ? args.url.trim() : "";
+      const targetIsProfileNavigation =
+        Boolean(targetUrl) && this.isLikelyProfileLikeUrl(targetUrl);
+      const requestedFinishStatus =
+        effectiveCall.name === "finish_task" && typeof args.status === "string"
+          ? args.status
+          : "completed";
       const jobRuntime = this.options.runtimeStats.jobApplication;
       const targetApplyCount = Math.max(1, jobRuntime.targetApplyCount);
+      if (
+        this.options.taskPolicy.profileResumeContextRequired &&
+        !jobRuntime.profileContextExtracted &&
+        (this.hasProfileResumeContextSignals(state) || this.isLikelyProfileExtractionLoop(state))
+      ) {
+        jobRuntime.profileContextExtracted = true;
+        this.options.logger.logStatus(
+          `Step ${step}: job policy inferred profile context from accumulated observations; continuing vacancy flow.`,
+        );
+      }
+      const profileContextPending =
+        this.options.taskPolicy.profileResumeContextRequired &&
+        !jobRuntime.profileContextExtracted;
+      const onProfileLikePage = this.isLikelyProfileLikeUrl(currentUrl);
       const hasPendingCurrentVacancy =
         Boolean(jobRuntime.currentVacancyFingerprint) &&
         jobRuntime.appliedVacancyFingerprints.size < targetApplyCount;
@@ -759,18 +847,55 @@ export class BrowserAgent {
           jobRuntime.currentVacancyFingerprint as string,
         );
       const coverLetterStepRequiredNow =
-        this.isHhVacancyResponseUrl(currentUrl) &&
+        this.isLikelyJobResponseUrl(currentUrl) &&
         jobRuntime.appliedVacancyFingerprints.size > 0 &&
         missingCoverLetterForCurrentVacancy;
 
+      if (profileContextPending) {
+        if (!onProfileLikePage && effectiveCall.name !== "navigate_to_url") {
+          this.options.logger.logStatus(
+            `Step ${step}: job policy redirected ${effectiveCall.name} -> profile/resume extraction first.`,
+          );
+          effectiveCall = {
+            ...effectiveCall,
+            name: "query_dom",
+            arguments: this.stringifyToolArgs({
+              question:
+                "Find visible controls or navigation paths that open the user's profile or resume details.",
+              maxResults: 10,
+            }),
+          };
+        } else if (
+          onProfileLikePage &&
+          (effectiveCall.name === "go_back" ||
+            effectiveCall.name === "finish_task" ||
+            (effectiveCall.name === "navigate_to_url" && !targetIsProfileNavigation))
+        ) {
+          this.options.logger.logStatus(
+            `Step ${step}: job policy blocked leaving profile before resume facts are extracted.`,
+          );
+          effectiveCall = {
+            ...effectiveCall,
+            name: "query_dom",
+            arguments: this.stringifyToolArgs({
+              question:
+                "Find visible sections or controls with resume facts: desired role, experience, skills, education, and summary.",
+              maxResults: 10,
+            }),
+          };
+        }
+      }
+
       if (
         hasPendingCurrentVacancy &&
-        this.isHhVacancyDetailUrl(currentUrl) &&
+        this.isLikelyJobDetailUrl(currentUrl) &&
         effectiveCall.name === "navigate_to_url"
       ) {
         const leavingCurrentVacancy =
-          !targetUrl || !this.isHhVacancyDetailUrl(targetUrl) || targetUrl !== currentUrl;
-        if (leavingCurrentVacancy) {
+          !targetUrl || !this.isLikelyJobDetailUrl(targetUrl) || targetUrl !== currentUrl;
+        const allowProfileNavigationForMissingContext =
+          targetIsProfileNavigation && !hasProfileEvidence;
+        if (leavingCurrentVacancy && !allowProfileNavigationForMissingContext) {
           this.options.logger.logStatus(
             `Step ${step}: job policy prevented leaving opened vacancy before apply attempt.`,
           );
@@ -792,7 +917,7 @@ export class BrowserAgent {
         const tryingToLeaveForOtherStep =
           effectiveCall.name === "navigate_to_url" ||
           effectiveCall.name === "go_back" ||
-          effectiveCall.name === "finish_task";
+          (effectiveCall.name === "finish_task" && requestedFinishStatus === "completed");
         if (tryingToLeaveForOtherStep) {
           this.options.logger.logStatus(
             `Step ${step}: job policy blocked leaving vacancy flow before cover letter is filled.`,
@@ -839,32 +964,19 @@ export class BrowserAgent {
       }
 
       if (effectiveCall.name === "navigate_to_url" && targetUrl) {
-        if (/https?:\/\/(?:www\.)?hh\.ru\/applicant(?:\/|\?|$)/i.test(targetUrl)) {
-          this.options.logger.logStatus(
-            `Step ${step}: job policy redirected navigate_to_url ${targetUrl} -> https://hh.ru/applicant/resumes`,
-          );
-          effectiveCall = {
-            ...effectiveCall,
-            name: "navigate_to_url",
-            arguments: this.stringifyToolArgs({
-              url: "https://hh.ru/applicant/resumes",
-            }),
-          };
-        }
-
         const updatedArgs = this.parseToolArgs(effectiveCall.arguments);
         const updatedTargetUrl =
           typeof updatedArgs.url === "string" ? updatedArgs.url : targetUrl;
 
         if (
-          hasProfileEvidence &&
+          jobRuntime.profileContextExtracted &&
           visitedVacancySearch &&
-          this.isHhProfileLikeUrl(updatedTargetUrl)
+          this.isLikelyProfileLikeUrl(updatedTargetUrl)
         ) {
           this.options.logger.logStatus(
             `Step ${step}: job policy blocked repeated profile navigation -> continue vacancy search.`,
           );
-          if (this.isHhVacancySearchUrl(currentUrl)) {
+          if (this.isLikelyJobSearchUrl(currentUrl)) {
             effectiveCall = {
               ...effectiveCall,
               name: "query_dom",
@@ -877,43 +989,27 @@ export class BrowserAgent {
           } else {
             effectiveCall = {
               ...effectiveCall,
-              name: "navigate_to_url",
+              name: "query_dom",
               arguments: this.stringifyToolArgs({
-                url: this.buildJobSearchUrl(),
+                question: this.buildJobSearchPrompt(),
+                maxResults: 10,
               }),
             };
           }
         }
-
-        if (
-          hasProfileEvidence &&
-          visitedVacancySearch &&
-          /https?:\/\/(?:www\.)?hh\.ru\/?(?:\?|$)/i.test(updatedTargetUrl)
-        ) {
-          this.options.logger.logStatus(
-            `Step ${step}: job policy blocked root navigation during active vacancy flow.`,
-          );
-          effectiveCall = {
-            ...effectiveCall,
-            name: "navigate_to_url",
-            arguments: this.stringifyToolArgs({
-              url: this.buildJobSearchUrl(),
-            }),
-          };
-        }
       }
 
       if (
-        hasProfileEvidence &&
+        jobRuntime.profileContextExtracted &&
         visitedVacancySearch &&
-        this.isHhVacancySearchUrl(currentUrl) &&
+        this.isLikelyJobSearchUrl(currentUrl) &&
         (effectiveCall.name === "query_dom" || effectiveCall.name === "get_page_state")
       ) {
         const queryText =
           effectiveCall.name === "query_dom"
             ? String(this.parseToolArgs(effectiveCall.arguments).question ?? "")
             : String(this.parseToolArgs(effectiveCall.arguments).note ?? "");
-        if (/(resume|cv|profile|резюм|профил)/i.test(queryText)) {
+        if (/(resume|cv|profile|\u0440\u0435\u0437\u044e\u043c|\u043f\u0440\u043e\u0444\u0438\u043b)/i.test(queryText)) {
           this.options.logger.logStatus(
             `Step ${step}: job policy redirected ${effectiveCall.name} resume-inspection on vacancy search page -> vacancy list inspection.`,
           );
@@ -939,9 +1035,9 @@ export class BrowserAgent {
           question,
         );
         const onVacancyFlowPage =
-          this.isHhVacancySearchUrl(currentUrl) ||
-          this.isHhVacancyDetailUrl(currentUrl) ||
-          this.isHhVacancyResponseUrl(currentUrl);
+          this.isLikelyJobSearchUrl(currentUrl) ||
+          this.isLikelyJobDetailUrl(currentUrl) ||
+          this.isLikelyJobResponseUrl(currentUrl);
 
         if (asksForVacancyList && !onVacancyFlowPage) {
           this.options.logger.logStatus(
@@ -949,55 +1045,116 @@ export class BrowserAgent {
           );
           effectiveCall = {
             ...effectiveCall,
-            name: "navigate_to_url",
+            name: "query_dom",
             arguments: this.stringifyToolArgs({
-              url: this.buildJobSearchUrl(),
+              question: this.buildJobSearchPrompt(),
+              maxResults: 10,
             }),
           };
         }
       }
 
       if (
-        hasProfileEvidence &&
+        jobRuntime.profileContextExtracted &&
         visitedVacancySearch &&
         (effectiveCall.name === "click_element" || effectiveCall.name === "scroll") &&
-        this.isHhProfileLikeUrl(currentUrl)
+        this.isLikelyProfileLikeUrl(currentUrl)
       ) {
         this.options.logger.logStatus(
           `Step ${step}: job policy redirected ${effectiveCall.name} on profile page -> vacancy search.`,
         );
         effectiveCall = {
           ...effectiveCall,
-          name: "navigate_to_url",
+          name: "query_dom",
           arguments: this.stringifyToolArgs({
-            url: this.buildJobSearchUrl(),
+            question: this.buildJobSearchPrompt(),
+            maxResults: 10,
           }),
         };
       }
     }
 
     const jobRuntime = this.options.runtimeStats.jobApplication;
+    const targetApplyCount = Math.max(1, jobRuntime.targetApplyCount);
+    const jobIncomplete =
+      jobRuntime.enabled && jobRuntime.appliedVacancyFingerprints.size < targetApplyCount;
     const profileContextStillRequired =
-      !jobRuntime.enabled ||
-      (jobRuntime.extractedVacancyFingerprints.size === 0 &&
-        jobRuntime.appliedVacancyFingerprints.size === 0);
+      jobRuntime.enabled &&
+      this.options.taskPolicy.profileResumeContextRequired &&
+      !jobRuntime.profileContextExtracted;
+    const currentUrlForFinish = this.currentUrlFromState(state) ?? "";
+    const onProfileForFinish = this.isLikelyProfileLikeUrl(currentUrlForFinish);
+    const finishTaskStatus =
+      effectiveCall.name === "finish_task"
+        ? (() => {
+            const parsed = this.parseToolArgs(effectiveCall.arguments);
+            return typeof parsed.status === "string" ? parsed.status : "completed";
+          })()
+        : "completed";
 
     if (
       effectiveCall.name === "finish_task" &&
       this.options.taskPolicy.jobApplicationFlow &&
-      this.options.taskPolicy.profileResumeContextRequired &&
+      finishTaskStatus === "needs_user_input" &&
+      jobIncomplete &&
+      !hasBlockingSignals(state.latestSignals)
+    ) {
+      this.options.logger.logStatus(
+        `Step ${step}: finish_task(needs_user_input) blocked by job policy while target applications are incomplete.`,
+      );
+      if (
+        this.isLikelyJobSearchUrl(currentUrlForFinish) ||
+        this.isLikelyJobDetailUrl(currentUrlForFinish) ||
+        this.isLikelyJobResponseUrl(currentUrlForFinish)
+      ) {
+        const result = await this.options.toolRegistry.execute(
+          "query_dom",
+          this.stringifyToolArgs({
+            question:
+              "List relevant vacancy cards/links or apply controls for the next actionable vacancy step.",
+            maxResults: 10,
+          }),
+        );
+        return { result, executedToolName: "query_dom" };
+      }
+
+      const result = await this.options.toolRegistry.execute(
+        "query_dom",
+        this.stringifyToolArgs({
+          question: this.buildJobSearchPrompt(),
+          maxResults: 10,
+        }),
+      );
+      return { result, executedToolName: "query_dom" };
+    }
+
+    if (
+      effectiveCall.name === "finish_task" &&
+      this.options.taskPolicy.jobApplicationFlow &&
+      finishTaskStatus !== "blocked" &&
       profileContextStillRequired &&
-      !this.hasProfileResumeEvidence(state)
+      !hasBlockingSignals(state.latestSignals)
     ) {
       this.options.logger.logStatus(
         `Step ${step}: finish_task blocked by job policy until profile/resume context is extracted.`,
       );
+      if (!onProfileForFinish) {
+        const result = await this.options.toolRegistry.execute(
+          "query_dom",
+          this.stringifyToolArgs({
+            question:
+              "Find where to open profile/resume details to extract role, skills, experience, and education.",
+            maxResults: 10,
+          }),
+        );
+        return { result, executedToolName: "query_dom" };
+      }
       const result = await this.options.toolRegistry.execute(
         "query_dom",
         this.stringifyToolArgs({
           question:
-            "Where is the user's profile/resume on this site, and what key skills/experience are visible?",
-          maxResults: 8,
+            "Where are the visible resume/profile sections with skills, experience, education, and desired role?",
+          maxResults: 10,
         }),
       );
       return { result, executedToolName: "query_dom" };
@@ -1119,7 +1276,7 @@ export class BrowserAgent {
 
       if (functionCalls.length > 1) {
         this.options.logger.logStatus(
-          `Модель вернула ${functionCalls.length} вызовов инструментов на шаге ${step}. Выполняю только первый, остальные помечаю как пропущенные.`,
+          `Model returned ${functionCalls.length} tool calls at step ${step}. Executing only the first one and marking the rest as skipped.`,
         );
       }
 
@@ -1220,3 +1377,4 @@ export class BrowserAgent {
     return { report: fallbackReport, state };
   }
 }
+
