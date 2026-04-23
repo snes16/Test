@@ -591,7 +591,7 @@ function isResumePromoCardLabel(label: string): boolean {
   if (!normalized) {
     return false;
   }
-  return /(hh\s*pro|подписк|преимуществ\w*\s+подписк|готовое\s+резюме|репетиция\s+собеседования|карьерн\w*\s+консульт|ментор|наставник|доверьте\s+составление\s+резюме|скидк|до\s+\d{1,2}\.\d{1,2})/i.test(
+  return /(подписк|преимуществ\w*\s+подписк|готовое\s+резюме|репетиция\s+собеседования|карьерн\w*\s+консульт|ментор|наставник|доверьте\s+составление\s+резюме|скидк|до\s+\d{1,2}\.\d{1,2})/i.test(
     normalized,
   );
 }
@@ -626,6 +626,133 @@ function isMeaningfulVacancyExtraction(text: string): boolean {
     );
 
   return hasRoleSignals && hasDetailSignals;
+}
+
+function isLikelyProfileResumeUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      /\/(applicant|candidate)\/(?:resumes?|profile)(?:\/|$)/i.test(path) ||
+      /\/profile\/(?:me|resume)?(?:\/|$)/i.test(path) ||
+      /\/resume(?:\/|$)/i.test(path) ||
+      /\/cv(?:\/|$)/i.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyApplicationResponseUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      /\/applicant\/vacancy_response(?:\/|$)/i.test(path) ||
+      /\/vacancy\/response(?:\/|$)/i.test(path) ||
+      /\/application(?:\/|$)/i.test(path) ||
+      /\/apply(?:\/|$)/i.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isLikelyProfileContextExtraction(text: string): boolean {
+  const normalized = text.replace(/\s+/g, " ").trim();
+  if (normalized.length < 140) {
+    return false;
+  }
+
+  const hasProfileSignals =
+    /(summary|about|profile|experience|skills?|education|position|роль|должност|опыт\s+работы|навык|образован|обо\s+мне)/i.test(
+      normalized,
+    );
+  if (!hasProfileSignals) {
+    return false;
+  }
+
+  const hasTechnicalSpecifics =
+    /(python|typescript|javascript|java|go|sql|docker|kubernetes|aws|gcp|azure|ml|ai|llm|nlp|cv|data|инженер|разработчик|аналитик)/i.test(
+      normalized,
+    );
+
+  return hasTechnicalSpecifics || normalized.length >= 280;
+}
+
+function isLikelyResumeDetailUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    const path = parsed.pathname.toLowerCase();
+    return (
+      (/^\/resume\/[a-z0-9_-]{6,}(?:\/|$)/i.test(path) ||
+        /^\/cv\/[a-z0-9_-]{6,}(?:\/|$)/i.test(path)) &&
+      !/^\/(?:resume|cv)\/edit\//i.test(path)
+    );
+  } catch {
+    return false;
+  }
+}
+
+function hasRoleOrTechSignals(text: string): boolean {
+  return /(engineer|developer|scientist|analyst|manager|architect|fullstack|frontend|backend|data|ml|ai|llm|python|typescript|javascript|react|vue|java|go|sql|инженер|разработчик|аналитик|архитектор|фуллстек|фронтенд|бэкенд|дата|данн)/i.test(
+    text,
+  );
+}
+
+function hasProfileDetailSignals(text: string): boolean {
+  return /(experience|опыт|skills?|навык|education|образован|salary|зарплат|доход|employment|занятост|contacts?|контакт|summary|о\s+себе|о\s+мне|responsibilit|обязанност)/i.test(
+    text,
+  );
+}
+
+function isLikelyProfileContextFromState(state: PageState): boolean {
+  const evidence = [
+    state.title,
+    ...state.textBlocks.slice(0, 18).map((item) => item.text),
+    ...state.interactiveElements.slice(0, 36).map((item) => `${item.name} ${item.description}`),
+  ]
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!evidence || evidence.length < 80) {
+    return false;
+  }
+
+  if (isLikelyProfileContextExtraction(evidence)) {
+    return true;
+  }
+
+  const roleOrTech = hasRoleOrTechSignals(evidence);
+  const profileDetails = hasProfileDetailSignals(evidence);
+  if (roleOrTech && profileDetails) {
+    return true;
+  }
+
+  return false;
+}
+
+function tryMarkProfileContextExtracted(context: ToolContext, state: PageState): void {
+  const job = context.runtimeStats.jobApplication;
+  if (!job.enabled || job.profileContextExtracted) {
+    return;
+  }
+  if (!isLikelyProfileResumeUrl(state.url)) {
+    return;
+  }
+
+  if (isLikelyResumeDetailUrl(state.url)) {
+    const titleAndText = `${state.title} ${state.summary}`.replace(/\s+/g, " ").trim();
+    if (titleAndText.length >= 16 && hasRoleOrTechSignals(titleAndText)) {
+      job.profileContextExtracted = true;
+      return;
+    }
+  }
+
+  if (isLikelyProfileContextFromState(state)) {
+    job.profileContextExtracted = true;
+  }
 }
 
 async function clickNestedApplyControl(locator: Locator): Promise<boolean> {
@@ -888,6 +1015,7 @@ function resolveCurrentVacancyFingerprint(
 function jobProgress(context: ToolContext): {
   enabled: boolean;
   targetApplyCount: number;
+  profileContextExtracted: boolean;
   openedVacancies: number;
   extractedVacancies: number;
   appliedVacancies: number;
@@ -898,6 +1026,7 @@ function jobProgress(context: ToolContext): {
   return {
     enabled: job.enabled,
     targetApplyCount: job.targetApplyCount,
+    profileContextExtracted: job.profileContextExtracted,
     openedVacancies: job.openedVacancyFingerprints.size,
     extractedVacancies: job.extractedVacancyFingerprints.size,
     appliedVacancies: job.appliedVacancyFingerprints.size,
@@ -1199,8 +1328,12 @@ function classifyMessageText(
   extractedText: string,
   subject: string,
   sender: string,
+  options?: {
+    treatVerificationAsSuspicious?: boolean;
+  },
 ): MessageClassification {
   const text = `${subject}\n${sender}\n${extractedText}`.toLowerCase();
+  const treatVerificationAsSuspicious = Boolean(options?.treatVerificationAsSuspicious);
   const suspiciousHints = [
     "limited time",
     "act now",
@@ -1218,12 +1351,151 @@ function classifyMessageText(
     "loan approval",
     "claim reward",
     "click here",
+    "вы выиграли",
+    "поздравляем",
+    "ограниченное предложение",
+    "только сегодня",
+    "промокод",
+    "спецпредложение",
+    "бонус",
+    "лотерея",
+    "казино",
+    "крипто",
+    "одобрение займа",
+    "быстрый займ",
+    "заработок",
+    "инвестиции",
+    "перейдите по ссылке",
+    "нажмите здесь",
+    "в спам",
+    "отписаться",
   ];
   const score = suspiciousHints.reduce(
     (accumulator, hint) => (text.includes(hint) ? accumulator + 1 : accumulator),
     0,
   );
+
+  const hasVerificationKeyword =
+    /(verification\s*code|otp|one[-\s]?time\s*(?:code|pass(?:word)?)|two[-\s]?factor|2fa|security code|login code|код[^\s]{0,8}\s+подтвержд|код[^\s]{0,8}\s+вход|код[^\s]{0,8}\s+авторизац|одноразов[^\s]{0,8}\s+код|код[^\s]{0,8}\s+из\s+sms)/i.test(
+      text,
+    );
+  const hasCodePattern =
+    /\b(?:code|otp|парол|код)\b[^\n\r]{0,40}\b\d{4,8}\b/i.test(text) ||
+    /\b\d{4,8}\b[^\n\r]{0,40}\b(?:code|otp|парол|код)\b/i.test(text);
+  const isVerificationLike = hasVerificationKeyword && hasCodePattern;
+
+  if (treatVerificationAsSuspicious && isVerificationLike) {
+    return "suspicious";
+  }
+
   return score >= 2 ? "suspicious" : "normal";
+}
+
+async function attemptMailboxCleanupAction(
+  context: ToolContext,
+): Promise<{
+  attempted: boolean;
+  succeeded: boolean;
+  actionLabel: string | null;
+}> {
+  const page = context.browser.getPage();
+  const clicked = await page
+    .evaluate(() => {
+      const normalize = (value: string | null | undefined): string =>
+        (value ?? "").replace(/\s+/g, " ").trim();
+
+      const visible = (element: Element | null): element is HTMLElement => {
+        if (!(element instanceof HTMLElement)) {
+          return false;
+        }
+        const style = window.getComputedStyle(element);
+        if (style.display === "none" || style.visibility === "hidden") {
+          return false;
+        }
+        const rect = element.getBoundingClientRect();
+        return rect.width >= 2 && rect.height >= 2;
+      };
+
+      const enabled = (element: HTMLElement): boolean =>
+        !element.hasAttribute("disabled") && element.getAttribute("aria-disabled") !== "true";
+
+      const destructiveLabel = (element: HTMLElement): string => {
+        return normalize(
+          [
+            element.innerText,
+            element.textContent,
+            element.getAttribute("aria-label"),
+            element.getAttribute("title"),
+            element.getAttribute("data-tooltip"),
+            element.getAttribute("data-tooltip-override"),
+          ]
+            .filter(Boolean)
+            .join(" "),
+        );
+      };
+
+      const deleteLike = (label: string): boolean =>
+        /(delete|trash|remove|spam|junk|mark as spam|move to spam|удал|корзин|спам|в\s+спам|мусор)/i.test(
+          label,
+        );
+      const permanentLike = (label: string): boolean =>
+        /(permanent|forever|hard\s*delete|безвозврат|навсегда)/i.test(label);
+
+      const controls = Array.from(
+        document.querySelectorAll<HTMLElement>(
+          "button,[role='button'],input[type='button'],input[type='submit']",
+        ),
+      );
+
+      const scored = controls
+        .filter((control) => visible(control) && enabled(control))
+        .map((control) => {
+          const label = destructiveLabel(control);
+          if (!label || !deleteLike(label) || permanentLike(label)) {
+            return null;
+          }
+          let score = 0;
+          if (/(spam|junk|спам|в\s+спам)/i.test(label)) {
+            score += 20;
+          }
+          if (/(delete|trash|remove|удал|корзин|мусор)/i.test(label)) {
+            score += 10;
+          }
+          if (/toolbar|actions|панель/i.test(control.className || "")) {
+            score += 3;
+          }
+          return { control, label, score };
+        })
+        .filter((item): item is { control: HTMLElement; label: string; score: number } =>
+          Boolean(item),
+        )
+        .sort((left, right) => right.score - left.score);
+
+      const target = scored[0];
+      if (!target) {
+        return {
+          clicked: false,
+          label: null,
+        };
+      }
+
+      target.control.click();
+      return {
+        clicked: true,
+        label: target.label,
+      };
+    })
+    .catch(() => ({ clicked: false, label: null as string | null }));
+
+  if (clicked.clicked) {
+    await page.waitForTimeout(300);
+  }
+
+  return {
+    attempted: clicked.clicked,
+    succeeded: clicked.clicked,
+    actionLabel: clicked.label,
+  };
 }
 
 function collectInboxCandidates(state: PageState, visitedPreviews: Set<string>): InboxCandidate[] {
@@ -1327,6 +1599,11 @@ function mailboxProgress(context: ToolContext) {
 function buildMailboxFinalSummary(messages: VisitedMessage[]): string {
   const suspicious = messages.filter((message) => message.classification === "suspicious");
   const normal = messages.filter((message) => message.classification === "normal");
+  const cleanupMode = messages.some(
+    (message) => message.deletionAttempted || message.deletionSucceeded,
+  );
+  const deletedSuspicious = suspicious.filter((message) => message.deletionSucceeded).length;
+  const undeletedSuspicious = suspicious.length - deletedSuspicious;
 
   const formatEntry = (message: VisitedMessage, index: number): string => {
     const title = sanitizeSubject(message.subject) || sanitizeSubject(message.snippet) || "Без темы";
@@ -1345,10 +1622,15 @@ function buildMailboxFinalSummary(messages: VisitedMessage[]): string {
       ? suspicious.map((message, index) => formatEntry(message, index)).join("\n")
       : "спам не обнаружен";
 
+  const cleanupLine = cleanupMode
+    ? `\nУдаление спама: удалено ${deletedSuspicious}, не удалено ${Math.max(0, undeletedSuspicious)}`
+    : "";
+
   return (
     `Проверено писем: ${messages.length}\n` +
     `Нормальные (${normal.length}):\n${normalLines}\n` +
-    `Подозрительные (${suspicious.length}):\n${suspiciousLines}`
+    `Подозрительные (${suspicious.length}):\n${suspiciousLines}` +
+    cleanupLine
   );
 }
 
@@ -1579,6 +1861,7 @@ export function createToolDefinitions(): ToolSpec[] {
         });
         await page.waitForTimeout(350);
         const state = await context.inspector.getPageState();
+        tryMarkProfileContextExtracted(context, state);
         if (context.runtimeStats.mailboxScan.enabled) {
           context.runtimeStats.mailboxScan.pendingCandidate = null;
           context.runtimeStats.mailboxScan.stage = "INBOX_LISTING";
@@ -1614,22 +1897,31 @@ export function createToolDefinitions(): ToolSpec[] {
         required: [],
       },
       execute: async (_args, context) => {
-        const page = context.browser.getPage();
+        let page = await context.browser.ensureActivePage();
         const attempts: string[] = [];
         const readState = async () => {
           try {
+            page = await context.browser.ensureActivePage();
             const state = await context.inspector.getPageState();
             return {
               ...state,
               stateError: null as string | null,
             };
           } catch (error) {
-            const title = (await page.title().catch(() => "")) || "Untitled";
+            let safePage: Page | null = null;
+            try {
+              safePage = await context.browser.ensureActivePage();
+              page = safePage;
+            } catch {
+              safePage = null;
+            }
+            const title = safePage ? (await safePage.title().catch(() => "")) || "Untitled" : "Untitled";
+            const fallbackUrl = safePage ? safePage.url() : "";
             const message = error instanceof Error ? error.message : String(error);
             return {
-              url: page.url(),
+              url: fallbackUrl,
               title,
-              summary: `Page "${title}" at ${page.url()}. Structured inspection failed.`,
+              summary: `Page "${title}" at ${fallbackUrl || "unknown"}. Structured inspection failed.`,
               textBlocks: [] as Array<{ text: string; tag: string }>,
               stateError: message,
             };
@@ -1680,6 +1972,29 @@ export function createToolDefinitions(): ToolSpec[] {
           state = await readState();
         }
 
+        if (!hasChangedFromBefore(state)) {
+          const openPages = context.browser
+            .captureOpenPages()
+            .filter((candidate) => !candidate.isClosed());
+          if (openPages.length > 1 && !page.isClosed()) {
+            try {
+              await page.close({ runBeforeUnload: false });
+              attempts.push("close_current_tab");
+            } catch {
+              attempts.push("close_current_tab_failed");
+            }
+            try {
+              page = await context.browser.ensureActivePage();
+              await page.bringToFront().catch(() => undefined);
+              await page.waitForLoadState("domcontentloaded", { timeout: 5000 }).catch(() => undefined);
+              attempts.push("switch_to_previous_tab");
+              state = await readState();
+            } catch {
+              attempts.push("switch_to_previous_tab_failed");
+            }
+          }
+        }
+
         const changed = hasChangedFromBefore(state);
         if (!changed) {
           return {
@@ -1705,6 +2020,7 @@ export function createToolDefinitions(): ToolSpec[] {
           context.runtimeStats.mailboxScan.pendingCandidate = null;
           context.runtimeStats.mailboxScan.stage = "REFRESH_LIST";
           if ("interactiveElements" in state && Array.isArray(state.interactiveElements)) {
+            tryMarkProfileContextExtracted(context, state as PageState);
             updateMailboxListState(context, state as PageState);
             context.runtimeStats.mailboxScan.stage = "REFRESH_LIST";
           }
@@ -1789,6 +2105,7 @@ export function createToolDefinitions(): ToolSpec[] {
       },
       execute: async (_args, context) => {
         const state = await context.inspector.getPageState();
+        tryMarkProfileContextExtracted(context, state);
         const candidates = updateMailboxListState(context, state);
         return {
           ok: true,
@@ -1830,6 +2147,8 @@ export function createToolDefinitions(): ToolSpec[] {
       },
       execute: async (args, context) => {
         const result = await context.inspector.queryDom(args.question, args.maxResults);
+        const stateAfterQuery = await context.inspector.getPageState();
+        tryMarkProfileContextExtracted(context, stateAfterQuery);
         return {
           ok: true,
           observation: {
@@ -2454,7 +2773,9 @@ export function createToolDefinitions(): ToolSpec[] {
               }
             }
 
-            applyConfirmed = confirmation.confirmed || afterUrl !== beforeUrl;
+            const transitionedToApplicationFlow =
+              afterUrl !== beforeUrl && isLikelyApplicationResponseUrl(afterUrl);
+            applyConfirmed = confirmation.confirmed || transitionedToApplicationFlow;
             applyConfirmationEvidence = confirmation.evidence;
 
             if (applyConfirmed) {
@@ -2576,6 +2897,7 @@ export function createToolDefinitions(): ToolSpec[] {
         }
         await page.waitForTimeout(300);
         const postClickState = await context.inspector.getPageState();
+        tryMarkProfileContextExtracted(context, postClickState);
         const candidates = updateMailboxListState(context, postClickState);
         return {
           ok: true,
@@ -3230,18 +3552,24 @@ export function createToolDefinitions(): ToolSpec[] {
 
         if (job.enabled) {
           const currentUrl = page.url();
-          const vacancyFingerprint = resolveCurrentVacancyFingerprint(
-            job.currentVacancyFingerprint,
-            currentUrl,
-            currentUrl,
-            args.elementId ? text : "",
-          );
-          if (vacancyFingerprint) {
-            job.openedVacancyFingerprints.add(vacancyFingerprint);
-            if (isMeaningfulVacancyExtraction(text)) {
-              job.extractedVacancyFingerprints.add(vacancyFingerprint);
+          if (isLikelyProfileResumeUrl(currentUrl)) {
+            if (isLikelyProfileContextExtraction(text)) {
+              job.profileContextExtracted = true;
             }
-            job.currentVacancyFingerprint = vacancyFingerprint;
+          } else {
+            const vacancyFingerprint = resolveCurrentVacancyFingerprint(
+              job.currentVacancyFingerprint,
+              currentUrl,
+              currentUrl,
+              args.elementId ? text : "",
+            );
+            if (vacancyFingerprint) {
+              job.openedVacancyFingerprints.add(vacancyFingerprint);
+              if (isMeaningfulVacancyExtraction(text)) {
+                job.extractedVacancyFingerprints.add(vacancyFingerprint);
+              }
+              job.currentVacancyFingerprint = vacancyFingerprint;
+            }
           }
         }
 
@@ -3310,7 +3638,15 @@ export function createToolDefinitions(): ToolSpec[] {
           const subject = identity.subject;
           const sender = identity.sender;
           const snippet = (identity.snippet || text).slice(0, 240);
-          const classification = classifyMessageText(text, subject, sender);
+          const classification = classifyMessageText(text, subject, sender, {
+            treatVerificationAsSuspicious:
+              context.runtimeStats.policy.mailboxDeleteVerificationCodes,
+          });
+          const shouldDeleteSuspicious =
+            context.runtimeStats.policy.mailboxDeleteRequested && classification === "suspicious";
+          const deletion = shouldDeleteSuspicious
+            ? await attemptMailboxCleanupAction(context)
+            : { attempted: false, succeeded: false, actionLabel: null as string | null };
 
           const message: VisitedMessage = {
             fingerprint: finalFingerprint,
@@ -3322,17 +3658,38 @@ export function createToolDefinitions(): ToolSpec[] {
             snippet,
             extractedText: text,
             classification,
+            deletionAttempted: deletion.attempted,
+            deletionSucceeded: deletion.succeeded,
             inspectedAt: new Date().toISOString(),
           };
           mailboxScan.visitedMessages.set(finalFingerprint, message);
           if (pending?.previewFingerprint) {
             mailboxScan.visitedPreviewFingerprints.add(pending.previewFingerprint);
           }
+          mailboxScan.pendingCandidate = null;
+
+          let autoReturnedToList = false;
+          let nextSuggestedElementId: string | null = null;
+          try {
+            const postActionState = await context.inspector.getPageState();
+            const stillInMessageContext = Boolean(
+              extractThreadOrMessageIdFromUrl(postActionState.url),
+            );
+            if (!stillInMessageContext) {
+              autoReturnedToList = true;
+              updateMailboxListState(context, postActionState);
+              nextSuggestedElementId = pickNextUniqueCandidate(context)?.elementId ?? null;
+            }
+          } catch {
+            // Non-fatal: fallback to explicit BACK_TO_LIST stage.
+          }
 
           mailboxScan.stage =
             mailboxScan.visitedMessages.size >= mailboxScan.requestedCount
               ? "COMPLETE"
-              : "BACK_TO_LIST";
+              : autoReturnedToList
+                ? "NEXT_UNIQUE"
+                : "BACK_TO_LIST";
 
           return {
             ok: true,
@@ -3344,6 +3701,11 @@ export function createToolDefinitions(): ToolSpec[] {
               sender,
               subject,
               snippet,
+              autoDeletionAttempted: deletion.attempted,
+              autoDeletionSucceeded: deletion.succeeded,
+              autoDeletionAction: deletion.actionLabel,
+              autoReturnedToList,
+              nextSuggestedElementId,
               mailboxScan: mailboxProgress(context),
               jobApplication: job.enabled ? jobProgress(context) : undefined,
             },
@@ -3455,6 +3817,29 @@ export function createToolDefinitions(): ToolSpec[] {
         required: ["summary"],
       },
       execute: async (args, context) => {
+        const finishStatus = args.status ?? "completed";
+        const nextSteps = Array.isArray(args.nextSteps) ? args.nextSteps : [];
+
+        if (finishStatus !== "completed") {
+          return {
+            ok: true,
+            observation: {
+              status: finishStatus,
+              summary: args.summary,
+              nextSteps,
+              jobApplication: context.runtimeStats.jobApplication.enabled
+                ? jobProgress(context)
+                : undefined,
+            },
+            control: {
+              type: "finish",
+              status: finishStatus,
+              summary: args.summary,
+              nextSteps,
+            },
+          };
+        }
+
         const mailboxScan = context.runtimeStats.mailboxScan;
         if (mailboxScan.enabled) {
           const required = Math.max(1, mailboxScan.requestedCount || 10);
@@ -3463,10 +3848,23 @@ export function createToolDefinitions(): ToolSpec[] {
           const incomplete = visited.filter(
             (item) => item.extractedText.trim().length === 0 || !item.classification,
           );
+          const cleanupRequired = context.runtimeStats.policy.mailboxDeleteRequested;
+          const suspicious = visited.filter((item) => item.classification === "suspicious");
+          const undeletedSuspicious = cleanupRequired
+            ? suspicious.filter((item) => !item.deletionSucceeded)
+            : [];
+          const unattemptedSuspicious = cleanupRequired
+            ? suspicious.filter((item) => !item.deletionAttempted)
+            : [];
           const uniqueCount = uniqueFingerprints.size;
           const noDuplicates = uniqueCount === visited.length;
 
-          if (uniqueCount < required || incomplete.length > 0 || !noDuplicates) {
+          if (
+            uniqueCount < required ||
+            incomplete.length > 0 ||
+            !noDuplicates ||
+            unattemptedSuspicious.length > 0
+          ) {
             if (uniqueCount < required) {
               mailboxScan.stage = "NEXT_UNIQUE";
             }
@@ -3480,6 +3878,9 @@ export function createToolDefinitions(): ToolSpec[] {
                 internalUniqueOpenedCount: uniqueCount,
                 missingClassificationOrText: incomplete.length,
                 noDuplicates,
+                cleanupRequired,
+                undeletedSuspicious: undeletedSuspicious.length,
+                unattemptedSuspicious: unattemptedSuspicious.length,
                 mailboxScan: mailboxProgress(context),
               },
             };
@@ -3514,11 +3915,7 @@ export function createToolDefinitions(): ToolSpec[] {
           const appliedVacancies = job.appliedVacancyFingerprints.size;
           const coverLetters = job.coverLetterVacancyFingerprints.size;
 
-          if (
-            extractedVacancies < targetApplyCount ||
-            appliedVacancies < targetApplyCount ||
-            coverLetters < targetApplyCount
-          ) {
+          if (appliedVacancies < targetApplyCount) {
             return {
               ok: false,
               observation: {
@@ -3600,18 +3997,18 @@ export function createToolDefinitions(): ToolSpec[] {
         return {
           ok: true,
           observation: {
-            status: args.status,
+            status: finishStatus,
             summary: args.summary,
-            nextSteps: args.nextSteps,
+            nextSteps,
             jobApplication: context.runtimeStats.jobApplication.enabled
               ? jobProgress(context)
               : undefined,
           },
           control: {
             type: "finish",
-            status: args.status,
+            status: finishStatus,
             summary: args.summary,
-            nextSteps: args.nextSteps,
+            nextSteps,
           },
         };
       },
