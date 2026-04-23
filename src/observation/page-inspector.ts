@@ -54,26 +54,28 @@ function tokenize(input: string): string[] {
 }
 
 function hasVacancySignals(haystack: string): boolean {
-  return /(РѕС‚РєР»РёРє|apply|salary|Р·Р°СЂРїР»Р°С‚|experience|РѕРїС‹С‚|location|Р»РѕРєР°С†|remote|СѓРґР°Р»РµРЅ|per month|Р·Р° РјРµСЃСЏС†|СЂСѓР±|в‚Ѕ|\$|в‚¬)/i.test(
+  return /(\u043e\u0442\u043a\u043b\u0438\u043a|apply|salary|\u0437\u0430\u0440\u043f\u043b\u0430\u0442|experience|\u043e\u043f\u044b\u0442|location|\u043b\u043e\u043a\u0430\u0446|remote|\u0443\u0434\u0430\u043b\u0435\u043d|per month|\u0437\u0430\s+\u043c\u0435\u0441\u044f\u0446|\u0440\u0443\u0431|\u20bd|\$|\u20ac)/i.test(
     haystack,
   );
 }
 
 function hasRoleSignals(haystack: string): boolean {
-  return /(engineer|developer|scientist|analyst|manager|architect|qa|devops|designer|product|data|ai|ml|РёРЅР¶РµРЅРµСЂ|СЂР°Р·СЂР°Р±РѕС‚С‡РёРє|Р°РЅР°Р»РёС‚РёРє|РјРµРЅРµРґР¶РµСЂ|Р°СЂС…РёС‚РµРєС‚РѕСЂ|РґРёР·Р°Р№РЅРµСЂ)/i.test(
+  return /(engineer|developer|scientist|analyst|manager|architect|qa|devops|designer|product|data|ai|ml|\u0438\u043d\u0436\u0435\u043d\u0435\u0440|\u0440\u0430\u0437\u0440\u0430\u0431\u043e\u0442\u0447\u0438\u043a|\u0430\u043d\u0430\u043b\u0438\u0442\u0438\u043a|\u043c\u0435\u043d\u0435\u0434\u0436\u0435\u0440|\u0430\u0440\u0445\u0438\u0442\u0435\u043a\u0442\u043e\u0440|\u0434\u0438\u0437\u0430\u0439\u043d\u0435\u0440)/i.test(
     haystack,
   );
 }
 
 function isCompanyPromoVacancyCard(haystack: string): boolean {
   return (
-    /(Р°РєС‚РёРІРЅ\w*\s+РІР°РєР°РЅСЃРё\w*|active\s+vacanc(?:y|ies)|РїРѕСЃРјРѕС‚СЂРµС‚СЊ|view)/i.test(haystack) &&
+    /(\u0430\u043a\u0442\u0438\u0432\u043d\w*\s+\u0432\u0430\u043a\u0430\u043d\u0441\u0438\w*|active\s+vacanc(?:y|ies)|\u043f\u043e\u0441\u043c\u043e\u0442\u0440\u0435\u0442\u044c|view)/i.test(
+      haystack,
+    ) &&
     !hasVacancySignals(haystack)
   );
 }
 
 function isResumePromoCard(haystack: string): boolean {
-  return /(РіРѕС‚РѕРІРѕРµ\s+СЂРµР·СЋРјРµ|СЂРµРїРµС‚РёС†РёСЏ\s+СЃРѕР±РµСЃРµРґРѕРІР°РЅРёСЏ|РєР°СЂСЊРµСЂРЅ\w*\s+РєРѕРЅСЃСѓР»СЊС‚|РЅР°СЃС‚Р°РІРЅРёРє|РјРµРЅС‚РѕСЂ|РґРѕРІРµСЂСЊС‚Рµ\s+СЃРѕСЃС‚Р°РІР»РµРЅРёРµ\s+СЂРµР·СЋРјРµ|СЃРєРёРґРє|РґРѕ\s+\d{1,2}\.\d{1,2})/i.test(
+  return /(\u0433\u043e\u0442\u043e\u0432\u043e\u0435\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u0440\u0435\u043f\u0435\u0442\u0438\u0446\u0438\u044f\s+\u0441\u043e\u0431\u0435\u0441\u0435\u0434\u043e\u0432\u0430\u043d\u0438\u044f|\u043a\u0430\u0440\u044c\u0435\u0440\u043d\w*\s+\u043a\u043e\u043d\u0441\u0443\u043b\u044c\u0442|\u043d\u0430\u0441\u0442\u0430\u0432\u043d\u0438\u043a|\u043c\u0435\u043d\u0442\u043e\u0440|\u0434\u043e\u0432\u0435\u0440\u044c\u0442\u0435\s+\u0441\u043e\u0441\u0442\u0430\u0432\u043b\u0435\u043d\u0438\u0435\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u0441\u043a\u0438\u0434\u043a|\u0434\u043e\s+\d{1,2}\.\d{1,2})/i.test(
     haystack,
   );
 }
@@ -82,7 +84,13 @@ function isLikelyResumeEntry(haystack: string): boolean {
   if (isResumePromoCard(haystack)) {
     return false;
   }
-  return /(СЂРµР·СЋРј|resume|cv|РѕР±РЅРѕРІР»РµРЅ|СЂРµРґР°РєС‚РёСЂРѕРІР°С‚СЊ|РїРѕРґРЅСЏС‚СЊ\s+РІ\s+РїРѕРёСЃРєРµ|РїСЂРѕСЃРјРѕС‚СЂ\w*|Р¶РµР»Р°РµРјР°СЏ\s+РґРѕР»Р¶РЅРѕСЃС‚СЊ|Р¶РµР»Р°РµРјР°СЏ\s+Р·Р°СЂРїР»Р°С‚Р°)/i.test(
+  return /(\u0440\u0435\u0437\u044e\u043c|resume|cv|\u043e\u0431\u043d\u043e\u0432\u043b\u0435\u043d|\u0440\u0435\u0434\u0430\u043a\u0442\u0438\u0440\u043e\u0432\u0430\u0442\u044c|\u043f\u043e\u0434\u043d\u044f\u0442\u044c\s+\u0432\s+\u043f\u043e\u0438\u0441\u043a\u0435|\u043f\u0440\u043e\u0441\u043c\u043e\u0442\u0440\w*|\u0436\u0435\u043b\u0430\u0435\u043c\u0430\u044f\s+\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442\u044c|\u0436\u0435\u043b\u0430\u0435\u043c\u0430\u044f\s+\u0437\u0430\u0440\u043f\u043b\u0430\u0442\u0430)/i.test(
+    haystack,
+  );
+}
+
+function isResumeCreationControl(haystack: string): boolean {
+  return /((create|new|add)\s+resume|resume\s+builder|\u0441\u043e\u0437\u0434\u0430\u0442\u044c\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u0434\u043e\u0431\u0430\u0432\u0438\u0442\u044c\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u043d\u043e\u0432\u043e\u0435\s+\u0440\u0435\u0437\u044e\u043c\u0435)/i.test(
     haystack,
   );
 }
@@ -94,7 +102,7 @@ function hasExplicitListCue(question: string): boolean {
 }
 
 function isVacancyRequirementsQuestion(question: string): boolean {
-  return /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+  return /(requirement|responsibilit|qualification|skills?|experience|about the role|\u043e\u043f\u0438\u0441\u0430\u043d\u0438|\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d|\u043e\u0431\u044f\u0437\u0430\u043d\u043d\u043e\u0441\u0442|\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u0441\u0442\u0435\u043a)/i.test(
     question,
   );
 }
@@ -641,17 +649,24 @@ export class PageInspector {
     }
 
     const listIntent =
-      /(first|latest|recent|top|last|items?|list|rows?|messages?|vacanc|jobs?|orders?|РїРµСЂРІ|РїРѕСЃР»РµРґРЅ|СЃРїРёСЃ|РїРёСЃРµРј|СЃРѕРѕР±С‰РµРЅ|РІР°РєР°РЅСЃ|Р·Р°РєР°Р·)/i.test(
+      /(first|latest|recent|top|last|items?|list|rows?|messages?|vacanc|jobs?|orders?|\u043f\u0435\u0440\u0432|\u043f\u043e\u0441\u043b\u0435\u0434\u043d|\u0441\u043f\u0438\u0441|\u043f\u0438\u0441\u0435\u043c|\u0441\u043e\u043e\u0431\u0449\u0435\u043d|\u0432\u0430\u043a\u0430\u043d\u0441|\u0437\u0430\u043a\u0430\u0437)/i.test(
         lowerQuestion,
       );
-    const vacancyIntent = /(vacanc|job|position|role|СЂР°Р±РѕС‚|РІР°РєР°РЅСЃ|РґРѕР»Р¶РЅРѕСЃС‚)/i.test(
+    const vacancyIntent = /(vacanc|job|position|role|\u0440\u0430\u0431\u043e\u0442|\u0432\u0430\u043a\u0430\u043d\u0441|\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442)/i.test(
       lowerQuestion,
     );
     const onVacancyPage = /\/vacancy\/\d+/i.test(state.url.toLowerCase());
-    const resumeIntent = /(resume|cv|СЂРµР·СЋРј|РїСЂРѕС„РёР»)/i.test(lowerQuestion);
+    const resumeIntent = /(resume|cv|\u0440\u0435\u0437\u044e\u043c|\u043f\u0440\u043e\u0444\u0438\u043b)/i.test(
+      lowerQuestion,
+    );
+    const resumeFactsIntent =
+      resumeIntent &&
+      /(skill|experience|education|summary|role|\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u043d|\u043e\u0431\u043e\s+\u043c\u043d\u0435|\u0434\u043e\u043b\u0436\u043d\u043e\u0441\u0442)/i.test(
+        lowerQuestion,
+      );
     const vacancyDetailIntent =
       vacancyIntent &&
-      /(title|company|requirement|salary|location|skills?|experience|РЅР°Р·РІР°РЅ|РєРѕРјРїР°РЅ|С‚СЂРµР±РѕРІР°РЅ|Р·Р°СЂРїР»Р°С‚|Р»РѕРєР°С†|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃСЃС‹Р»Рє)/i.test(
+      /(title|company|requirement|salary|location|skills?|experience|\u043d\u0430\u0437\u0432\u0430\u043d|\u043a\u043e\u043c\u043f\u0430\u043d|\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d|\u0437\u0430\u0440\u043f\u043b\u0430\u0442|\u043b\u043e\u043a\u0430\u0446|\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u0441\u0441\u044b\u043b\u043a)/i.test(
         lowerQuestion,
       );
     const vacancyRequirementsIntent =
@@ -659,12 +674,12 @@ export class PageInspector {
     const listIntentForNavigationHints = hasExplicitListCue(lowerQuestion);
     const applyIntent =
       vacancyIntent &&
-      /(apply|respond|quick apply|send application|РѕС‚РєР»РёРє|РѕС‚РїСЂР°РІРёС‚СЊ СЂРµР·СЋРјРµ|РїРѕРґР°С‚СЊ Р·Р°СЏРІРєСѓ)/i.test(
+      /(apply|respond|quick apply|send application|\u043e\u0442\u043a\u043b\u0438\u043a|\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u043f\u043e\u0434\u0430\u0442\u044c\s+\u0437\u0430\u044f\u0432\u043a\u0443)/i.test(
         lowerQuestion,
       );
     const coverLetterIntent =
       vacancyIntent &&
-      /(cover[\s-]*letter|motivation|message to employer|СЃРѕРїСЂРѕРІРѕРґ|РїРёСЃСЊРјРѕ СЂР°Р±РѕС‚РѕРґР°С‚РµР»СЋ|РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє РѕС‚РєР»РёРєСѓ)/i.test(
+      /(cover[\s-]*letter|motivation|message to employer|\u0441\u043e\u043f\u0440\u043e\u0432\u043e\u0434|\u043f\u0438\u0441\u044c\u043c\u043e\s+\u0440\u0430\u0431\u043e\u0442\u043e\u0434\u0430\u0442\u0435\u043b\u044e|\u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439\s+\u043a\s+\u043e\u0442\u043a\u043b\u0438\u043a\u0443)/i.test(
         lowerQuestion,
       );
 
@@ -728,7 +743,7 @@ export class PageInspector {
             match.score += 1.4;
           }
           if (
-            /(РїРµСЂРµР№С‚Рё Рє РѕСЃРЅРѕРІРЅРѕРјСѓ РєРѕРЅС‚РµРЅС‚Сѓ|РїРѕРёСЃРє|search|СѓРґР°Р»РёС‚СЊ РёР· РёР·Р±СЂР°РЅРЅРѕРіРѕ|filters?|С„РёР»СЊС‚СЂ|sorting|СЃРѕСЂС‚РёСЂРѕРІРє|РЅР°СЃС‚СЂРѕР№Рє)/i.test(
+            /(\u043f\u0435\u0440\u0435\u0439\u0442\u0438\s+\u043a\s+\u043e\u0441\u043d\u043e\u0432\u043d\u043e\u043c\u0443\s+\u043a\u043e\u043d\u0442\u0435\u043d\u0442\u0443|\u043f\u043e\u0438\u0441\u043a|search|\u0443\u0434\u0430\u043b\u0438\u0442\u044c\s+\u0438\u0437\s+\u0438\u0437\u0431\u0440\u0430\u043d\u043d\u043e\u0433\u043e|filters?|\u0444\u0438\u043b\u044c\u0442\u0440|sorting|\u0441\u043e\u0440\u0442\u0438\u0440\u043e\u0432\u043a|\u043d\u0430\u0441\u0442\u0440\u043e\u0439\u043a)/i.test(
               low,
             )
           ) {
@@ -757,7 +772,7 @@ export class PageInspector {
           if (companyPromoCard) {
             match.score -= 6;
           }
-          if (/(РЅР°Р№РґРµРЅРѕ\s+\d+\s+РІР°РєР°РЅСЃ|found\s+\d+\s+vacanc)/i.test(low)) {
+          if (/(\u043d\u0430\u0439\u0434\u0435\u043d\u043e\s+\d+\s+\u0432\u0430\u043a\u0430\u043d\u0441|found\s+\d+\s+vacanc)/i.test(low)) {
             match.score -= 3;
           }
         }
@@ -765,14 +780,27 @@ export class PageInspector {
           if (isResumePromoCard(low)) {
             match.score -= 8;
           }
+          if (isResumeCreationControl(low)) {
+            match.score -= resumeFactsIntent ? 9 : 6;
+          }
           if (isLikelyResumeEntry(low)) {
             match.score += 4;
+          }
+          if (
+            resumeFactsIntent &&
+            /(\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u043e\u0431\u0440\u0430\u0437\u043e\u0432\u0430\u043d|\u043e\u0431\u043e\s+\u043c\u043d\u0435|experience|skills?|education|summary)/i.test(
+              low,
+            )
+          ) {
+            match.score += 2.5;
           }
         }
 
         if (
           low.includes("role=link") &&
-          /(РІС…РѕРґСЏС‰|С‡РµСЂРЅРѕРІРёРє|РєРѕСЂР·РёРЅ|СЏСЂР»С‹Рє|labels|inbox|drafts|trash|spam)/i.test(low)
+          /(\u0432\u0445\u043e\u0434\u044f\u0449|\u0447\u0435\u0440\u043d\u043e\u0432\u0438\u043a|\u043a\u043e\u0440\u0437\u0438\u043d|\u044f\u0440\u043b\u044b\u043a|labels|inbox|drafts|trash|spam)/i.test(
+            low,
+          )
         ) {
           match.score -= 2;
         }
@@ -793,7 +821,7 @@ export class PageInspector {
 
         if (applyIntent) {
           if (
-            /(apply|quick apply|respond|response|send application|РѕС‚РєР»РёРє|РѕС‚РєР»РёРєРЅСѓС‚СЊСЃСЏ|РѕС‚РїСЂР°РІРёС‚СЊ РѕС‚РєР»РёРє|РѕС‚РїСЂР°РІРёС‚СЊ СЂРµР·СЋРјРµ|РїРѕРґР°С‚СЊ Р·Р°СЏРІРєСѓ)/i.test(
+            /(apply|quick apply|respond|response|send application|\u043e\u0442\u043a\u043b\u0438\u043a|\u043e\u0442\u043a\u043b\u0438\u043a\u043d\u0443\u0442\u044c\u0441\u044f|\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c\s+\u043e\u0442\u043a\u043b\u0438\u043a|\u043e\u0442\u043f\u0440\u0430\u0432\u0438\u0442\u044c\s+\u0440\u0435\u0437\u044e\u043c\u0435|\u043f\u043e\u0434\u0430\u0442\u044c\s+\u0437\u0430\u044f\u0432\u043a\u0443)/i.test(
               low,
             )
           ) {
@@ -806,7 +834,7 @@ export class PageInspector {
 
         if (coverLetterIntent) {
           if (
-            /(cover[\s-]*letter|motivation|message to employer|СЃРѕРїСЂРѕРІРѕРґ|РїРёСЃСЊРјРѕ СЂР°Р±РѕС‚РѕРґР°С‚РµР»СЋ|РєРѕРјРјРµРЅС‚Р°СЂРёР№ Рє РѕС‚РєР»РёРєСѓ)/i.test(
+            /(cover[\s-]*letter|motivation|message to employer|\u0441\u043e\u043f\u0440\u043e\u0432\u043e\u0434|\u043f\u0438\u0441\u044c\u043c\u043e\s+\u0440\u0430\u0431\u043e\u0442\u043e\u0434\u0430\u0442\u0435\u043b\u044e|\u043a\u043e\u043c\u043c\u0435\u043d\u0442\u0430\u0440\u0438\u0439\s+\u043a\s+\u043e\u0442\u043a\u043b\u0438\u043a\u0443)/i.test(
               low,
             )
           ) {
@@ -823,7 +851,7 @@ export class PageInspector {
 
         if (vacancyDetailIntent || vacancyRequirementsIntent) {
           if (
-            /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+            /(requirement|responsibilit|qualification|skills?|experience|about the role|\u043e\u043f\u0438\u0441\u0430\u043d\u0438|\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d|\u043e\u0431\u044f\u0437\u0430\u043d\u043d\u043e\u0441\u0442|\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u0441\u0442\u0435\u043a)/i.test(
               low,
             )
           ) {
@@ -849,7 +877,7 @@ export class PageInspector {
       answer = `Found ${trimmed.length} relevant matches. Top match: "${top.label}" (${top.source}, score ${top.score}).`;
     } else if (vacancyDetailIntent || vacancyRequirementsIntent) {
       const detailBlock = state.textBlocks.find((item) =>
-        /(requirement|responsibilit|qualification|skills?|experience|about the role|РѕРїРёСЃР°РЅРё|С‚СЂРµР±РѕРІР°РЅ|РѕР±СЏР·Р°РЅРЅРѕСЃС‚|РЅР°РІС‹Рє|РѕРїС‹С‚|СЃС‚РµРє)/i.test(
+        /(requirement|responsibilit|qualification|skills?|experience|about the role|\u043e\u043f\u0438\u0441\u0430\u043d\u0438|\u0442\u0440\u0435\u0431\u043e\u0432\u0430\u043d|\u043e\u0431\u044f\u0437\u0430\u043d\u043d\u043e\u0441\u0442|\u043d\u0430\u0432\u044b\u043a|\u043e\u043f\u044b\u0442|\u0441\u0442\u0435\u043a)/i.test(
           item.text,
         ),
       );
@@ -867,7 +895,9 @@ export class PageInspector {
     const searchResultsLike =
       /\/search\/vacancy/i.test(state.url) ||
       state.textBlocks.some((item) =>
-        /(РЅР°Р№РґРµРЅРѕ\s+\d+\s+РІР°РєР°РЅСЃ|found\s+\d+\s+vacanc)/i.test(item.text.toLowerCase()),
+        /(\u043d\u0430\u0439\u0434\u0435\u043d\u043e\s+\d+\s+\u0432\u0430\u043a\u0430\u043d\u0441|found\s+\d+\s+vacanc)/i.test(
+          item.text.toLowerCase(),
+        ),
       );
     if (listIntentForNavigationHints && rowLikeVisible < 3 && !searchResultsLike) {
       answer +=

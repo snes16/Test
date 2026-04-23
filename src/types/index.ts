@@ -79,6 +79,10 @@ export interface TaskState {
 
 export interface TaskPolicy {
   auditReadOnlyMailboxScan: boolean;
+  mailboxScanFlow: boolean;
+  mailboxReadOnly: boolean;
+  mailboxDeleteRequested: boolean;
+  mailboxDeleteVerificationCodes: boolean;
   jobApplicationFlow: boolean;
   profileResumeContextRequired: boolean;
   requestedJobApplyCount: number | null;
@@ -94,6 +98,7 @@ export interface TaskPolicy {
 export interface JobApplicationRuntime {
   enabled: boolean;
   targetApplyCount: number;
+  profileContextExtracted: boolean;
   openedVacancyFingerprints: Set<string>;
   extractedVacancyFingerprints: Set<string>;
   appliedVacancyFingerprints: Set<string>;
@@ -123,6 +128,8 @@ export interface VisitedMessage {
   snippet: string;
   extractedText: string;
   classification: MessageClassification;
+  deletionAttempted: boolean;
+  deletionSucceeded: boolean;
   inspectedAt: string;
 }
 

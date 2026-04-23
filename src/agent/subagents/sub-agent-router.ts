@@ -31,7 +31,7 @@ export class SubAgentRouter {
     this.logger.logStatus(`Sub-agent selected: ${selected.id}.`);
 
     try {
-      const result = await selected.run(goal);
+      const result = await selected.run(goal, policy);
       return {
         selectedAgentId: selected.id,
         result,
@@ -47,7 +47,7 @@ export class SubAgentRouter {
         `Sub-agent ${selected.id} failed (${message}). Falling back to ${fallback.id}.`,
       );
 
-      const result = await fallback.run(goal);
+      const result = await fallback.run(goal, policy);
       return {
         selectedAgentId: selected.id,
         fallbackAgentId: fallback.id,
